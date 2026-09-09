@@ -1,0 +1,14 @@
+{
+  "name": "robinhood-volume-alerts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram bot that alerts when any token on Robinhood Chain trades 300k+ USD volume in a 1-minute window",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
