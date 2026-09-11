@@ -279,13 +279,20 @@ def cmd_econ(args: argparse.Namespace) -> int:
     zero_bits = zero_bits if zero_bits is not None else 42
     entry = entry if entry is not None else 0.01
 
-    print(Economics(
+    econ = Economics(
         hashrate=args.hashrate,
         zero_bits=zero_bits,
         entry_price_eth=entry,
         rent_usd_hour=args.rent,
         eth_usd=args.eth_usd,
-    ).report())
+        resale_usd=args.resale_usd,
+        epoch_cats=args.epoch_cats,
+        network_share=args.network_share,
+    )
+    print(econ.report())
+    if args.resale_usd:
+        print("\n--- projection ---")
+        print(econ.projection_report(max_cats=args.max_cats))
     return 0
 
 
@@ -474,6 +481,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--entry-eth", type=float)
     p.add_argument("--rent", type=float, default=1.928, help="USD per hour")
     p.add_argument("--eth-usd", type=float, default=3000.0)
+    p.add_argument("--resale-usd", type=float, default=0.0,
+                   help="what a cat actually sells for; enables the profit projection")
+    p.add_argument("--epoch-cats", type=int, default=0,
+                   help="cats minted network-wide per epoch (entry price doubles each epoch)")
+    p.add_argument("--network-share", type=float, default=1.0,
+                   help="your share of network mints, 0..1")
+    p.add_argument("--max-cats", type=int, default=500)
     p.add_argument("--offline", action="store_true")
     p.set_defaults(func=cmd_econ)
 

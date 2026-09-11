@@ -3,6 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class Projection:
+    """One mined cat in a running projection."""
+
+    index: int
+    hours: float
+    entry_usd: float
+    margin_usd: float
+    cumulative_usd: float
 
 
 @dataclass
@@ -13,6 +25,9 @@ class Economics:
     rent_usd_hour: float
     eth_usd: float
     epoch_doubling: bool = True   # entry price doubles each epoch
+    resale_usd: float = 0.0       # what a cat actually sells for
+    epoch_cats: int = 0           # cats minted network-wide per epoch (0 = never doubles)
+    network_share: float = 1.0    # fraction of network mints that are yours
 
     @property
     def expected_hashes(self) -> float:
@@ -69,5 +84,79 @@ class Economics:
             lines.append(
                 "Entry price doubles every epoch, so each subsequent cat costs at least "
                 "twice the entry above."
+            )
+        return "\n".join(lines)
+
+
+    # --- projection over many cats ------------------------------------------
+
+    def project(self, max_cats: int = 500, max_hours: float = 24 * 30) -> List[Projection]:
+        """Mine cats one after another until the entry price passes the resale price.
+
+        The entry price doubles every `epoch_cats` mints *network-wide*, so when you
+        are only part of the network you pay for other people's mints too: every cat
+        you take is accompanied by roughly (1/network_share - 1) cats from everyone
+        else, and the price climbs that much faster.
+        """
+        rows: List[Projection] = []
+        entry_eth = self.entry_price_eth
+        hours = 0.0
+        cumulative = 0.0
+        network_mints = 0.0
+        share = max(min(self.network_share, 1.0), 1e-9)
+
+        for index in range(1, max_cats + 1):
+            entry_usd = entry_eth * self.eth_usd
+            margin = self.resale_usd - entry_usd - self.rent_cost_per_cat_usd / share
+            if margin <= 0:
+                break
+
+            hours += self.seconds_per_cat / 3600.0
+            if hours > max_hours:
+                break
+            cumulative += margin
+            rows.append(Projection(index, hours, entry_usd, margin, cumulative))
+
+            # your mint, plus everyone else's during the same stretch
+            network_mints += 1.0 / share
+            if self.epoch_cats and network_mints >= self.epoch_cats:
+                entry_eth *= 2
+                network_mints -= self.epoch_cats
+
+        return rows
+
+    def projection_report(self, max_cats: int = 500) -> str:
+        if self.resale_usd <= 0:
+            return "(pass --resale-usd to project cumulative profit)"
+
+        rows = self.project(max_cats=max_cats)
+        if not rows:
+            return ("First cat is already unprofitable: entry "
+                    f"${self.entry_cost_per_cat_usd:,.0f} vs resale ${self.resale_usd:,.0f}.")
+
+        lines = [f"resale price        ${self.resale_usd:,.0f} per cat",
+                 f"your share of network mints  {self.network_share * 100:.0f}%", ""]
+        lines.append("  cat    elapsed     entry      margin   cumulative")
+        shown = [r for i, r in enumerate(rows) if i < 3 or i >= len(rows) - 3 or r.index % 25 == 0]
+        last_index = 0
+        for row in shown:
+            if row.index != last_index + 1 and last_index:
+                lines.append("   ...")
+            lines.append(f"  {row.index:>4}  {row.hours:>8.1f}h  ${row.entry_usd:>8,.0f}  "
+                         f"${row.margin_usd:>9,.0f}  ${row.cumulative_usd:>10,.0f}")
+            last_index = row.index
+
+        total = rows[-1]
+        lines += [
+            "",
+            f"profitable cats     {len(rows)} before the entry price passes resale",
+            f"time to mine them   {total.hours:.1f} h ({total.hours / 24:.1f} days)",
+            f"total margin        ${total.cumulative_usd:,.0f}",
+        ]
+        if self.epoch_cats:
+            lines.append(
+                f"Entry doubles every {self.epoch_cats} network mints, so the profitable "
+                "window is finite: faster hardware wins a larger share of it, it does not "
+                "make it bigger."
             )
         return "\n".join(lines)
