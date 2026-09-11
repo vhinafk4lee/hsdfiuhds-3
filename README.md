@@ -76,6 +76,61 @@ RTX 5090 — это Blackwell, `sm_120`, нужен CUDA ≥ 12.8 (в образ
 
 ---
 
+## Windows (домашний ПК с NVIDIA)
+
+Нужны: драйвер NVIDIA, **CUDA Toolkit 12.8+** (для RTX 50xx — обязательно 12.8 или
+новее), Visual Studio Build Tools с компонентом «Desktop development with C++» и
+Python 3.11+.
+
+Соберите из «x64 Native Tools Command Prompt for VS»:
+
+```bat
+git clone <этот-репозиторий>
+cd hsdfiuhds-3
+git checkout claude/zealous-gates-wb6oqv
+scripts\setup_windows.bat
+```
+
+Дальше — подобрать параметры под конкретную карту и замерить:
+
+```bat
+python -m hcminer.cli tune           :: перебирает конфигурации, печатает лучшую
+python -m hcminer.cli bench --seconds 20
+```
+
+`tune` печатает готовый блок для `config.toml` — впишите его в `[miner]`, и
+`bench`/`mine` будут работать уже на этих значениях.
+
+### Чтобы карта отдавала максимум
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows_maxperf.ps1
+powershell -ExecutionPolicy Bypass -File scripts\windows_maxperf.ps1 -Monitor
+```
+
+Скрипт поднимает power limit до максимума, снимает ограничение частот, ставит
+процессу майнера приоритет High и показывает температуры. На GeForce часть
+команд драйвер отклоняет — скрипт пишет об этом и идёт дальше, а не падает.
+
+**Про TDR — это главная ловушка Windows.** Если карта выводит изображение на
+монитор, драйвер убивает вычислительное ядро, которое считает дольше ~2 секунд, и
+экран моргает с сообщением о восстановлении драйвера. Майнер учитывает это сам:
+при `max_kernel_ms = 400` он измеряет длительность каждого запуска и уменьшает
+порцию работы, если та не укладывается в бюджет (и увеличивает, если есть запас).
+Поэтому на Windows не ставьте `max_kernel_ms = 0`. Если хотите более длинные
+запуски — продлите таймаут драйвера (нужны админ и перезагрузка):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows_maxperf.ps1 -SetTdrDelay
+```
+
+Что скрипт не делает за вас: режим «Prefer maximum performance» в панели NVIDIA и
+разгон в Afterburner. С разгоном важно понимать: нестабильные частоты дают не
+только вылеты, но и **неверные хэши** — майнер пересчитывает каждое решение на CPU
+и молча отбросит брак, так что разгон «на грани» выглядит как потеря скорости.
+
+---
+
 ## Рабочий порядок
 
 ### 1. Разобрать контракт
@@ -167,13 +222,21 @@ hcminer/tx.py                сборка, симуляция, подпись, �
 hcminer/economics.py         аренда против стоимости входа
 hcminer/preflight.py         сквозная проверка перед первым боевым минтом
 hcminer/cli.py               state | discover | solve-schema | verify | preflight |
-                             bench | econ | mine
+                             tune | bench | econ | mine
+scripts/build_windows.bat    сборка .exe (nvcc + MSVC)
+scripts/windows_maxperf.ps1  power limit, частоты, приоритет, TDR, мониторинг
 tests/                       всё, что проверяется без видеокарты
 ```
 
 Прообраз GPU не зашит в ядро: супервизор присылает готовый шаблон байтов и
 смещение 8 байт, которые перебирает карта. Поэтому смена схемы — это правка
 конфига, а не переписывание CUDA.
+
+Карта не простаивает между запусками: на каждый GPU держится несколько потоков
+CUDA, и пока один батч копируется обратно и проверяется, следующий уже считается.
+Размер сетки берётся из occupancy API — столько блоков, сколько реально помещается
+на все SM. `hcminer tune` перебирает threads / blocks / inner / streams и выдаёт
+лучшую комбинацию для вашей карты.
 
 Ядро считает keccak256 за один блок (прообраз до 135 байт; адрес + nonce +
 prev_work + anchor = 116, помещается), состояние целиком в регистрах: ptxas

@@ -4,3 +4,5 @@ discover/
 __pycache__/
 *.pyc
 src/cuda/hcminer-gpu
+src/cuda/hcminer-gpu.exe
+build/

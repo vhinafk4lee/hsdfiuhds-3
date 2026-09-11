@@ -166,7 +166,18 @@ class Preflight:
         if not Path(binary).exists():
             return FAIL, f"{binary} not found — build it: make -C src/cuda CUDA_ARCH=120"
 
-        gpu = GpuMiner(binary=binary, devices=str(self.cfg.get("miner.devices", "")))
+        # Start it with the configured tuning, so a bad value here fails now
+        # rather than at the first mining launch.
+        gpu = GpuMiner(
+            binary=binary,
+            devices=str(self.cfg.get("miner.devices", "")),
+            threads=int(self.cfg.get("miner.threads", 256)),
+            blocks=int(self.cfg.get("miner.blocks", 0)),
+            inner=int(self.cfg.get("miner.inner", 256)),
+            streams=int(self.cfg.get("miner.streams", 4)),
+            blocks_mult=int(self.cfg.get("miner.blocks_mult", 1)),
+            max_kernel_ms=float(self.cfg.get("miner.max_kernel_ms", 0)),
+        )
         gpu.start()
         try:
             for event in gpu.poll(timeout=10.0):

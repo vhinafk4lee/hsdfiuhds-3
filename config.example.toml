@@ -36,10 +36,19 @@ anchor_offset = 1                # blocks back, for arbsys/block anchor sources
 [miner]
 wallet_address   = "0x0000000000000000000000000000000000000000"
 private_key_env  = "HC_PRIVATE_KEY"   # key is read from this env var, never from disk
-gpu_binary       = "src/cuda/hcminer-gpu"
+gpu_binary       = "src/cuda/hcminer-gpu"   # Windows: src\\cuda\\hcminer-gpu.exe
 devices          = "0,1,2,3"
+
+# Launch tuning. Run `hcminer tune` once on the actual card and paste what it prints.
 threads          = 256
+blocks           = 0                  # 0 = fill every SM (from the occupancy API)
+blocks_mult      = 1                  # extra waves on top of full occupancy
 inner            = 256                # nonces per thread per kernel launch
+streams          = 4                  # batches in flight per GPU; keeps the card busy
+max_kernel_ms    = 0                  # 0 = uncapped (Linux / headless).
+                                      # On Windows leave the default 400: the driver
+                                      # kills kernels that run past the TDR timeout,
+                                      # and the miner shrinks the batch to stay under it.
 poll_seconds     = 5                  # how often to re-read chain state
 priority_fee_gwei = 0.01
 

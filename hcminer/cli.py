@@ -158,6 +158,71 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return Preflight(cfg, want_send).run()
 
 
+def _gpu_from_config(cfg: Config, **overrides: Any) -> "GpuMiner":
+    """Build a GpuMiner with the tuning values from config, overridable per call."""
+    settings = {
+        "binary": cfg.get("miner.gpu_binary", "src/cuda/hcminer-gpu"),
+        "devices": str(cfg.get("miner.devices", "")),
+        "threads": int(cfg.get("miner.threads", 256)),
+        "blocks": int(cfg.get("miner.blocks", 0)),
+        "inner": int(cfg.get("miner.inner", 256)),
+        "streams": int(cfg.get("miner.streams", 4)),
+        "blocks_mult": int(cfg.get("miner.blocks_mult", 1)),
+        "max_kernel_ms": float(cfg.get("miner.max_kernel_ms", 0)),
+    }
+    settings.update({k: v for k, v in overrides.items() if v is not None})
+    return GpuMiner(**settings)
+
+
+def cmd_tune(args: argparse.Namespace) -> int:
+    """Sweep launch parameters on this machine and report the fastest combination."""
+    cfg = Config.load(args.config) if Path(args.config).exists() else None
+    binary = args.binary or (cfg.get("miner.gpu_binary", "src/cuda/hcminer-gpu")
+                             if cfg else "src/cuda/hcminer-gpu")
+    devices = args.devices or (str(cfg.get("miner.devices", "")) if cfg else "")
+
+    from .gpu import resolve_binary
+
+    cmd = [resolve_binary(binary), "--autotune", str(args.seconds)]
+    if devices:
+        cmd += ["--devices", devices]
+    if args.max_kernel_ms:
+        cmd += ["--max-kernel-ms", str(args.max_kernel_ms)]
+
+    import subprocess
+
+    print("sweeping launch parameters (this takes a couple of minutes)...\n")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    best = None
+    assert proc.stdout
+    for line in proc.stdout:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event["type"] == "tune_result":
+            print(f"  threads={event['threads']:>4} blocks_mult={event['blocks_mult']} "
+                  f"inner={event['inner']:>5} streams={event['streams']}  "
+                  f"{event['hashrate'] / 1e9:7.3f} GH/s")
+        elif event["type"] == "tune":
+            best = event
+        elif event["type"] == "error":
+            print("  error:", event["message"])
+    proc.wait()
+
+    if not best:
+        print("\nautotune produced no result")
+        return 1
+
+    print(f"\nbest: {best['hashrate'] / 1e9:.3f} GH/s of {best['tested']} combinations")
+    print("\nPut this in config.toml under [miner]:")
+    print(f"  threads     = {best['threads']}")
+    print(f"  blocks_mult = {best['blocks_mult']}")
+    print(f"  inner       = {best['inner']}")
+    print(f"  streams     = {best['streams']}")
+    return 0
+
+
 def cmd_bench(args: argparse.Namespace) -> int:
     cfg = Config.load(args.config) if Path(args.config).exists() else None
     binary = args.binary or (cfg.get("miner.gpu_binary") if cfg else "src/cuda/hcminer-gpu")
@@ -165,10 +230,19 @@ def cmd_bench(args: argparse.Namespace) -> int:
 
     import subprocess
 
-    cmd = [binary, "--bench", str(args.seconds)]
+    from .gpu import resolve_binary
+
+    cmd = [resolve_binary(binary), "--bench", str(args.seconds)]
     if devices:
         cmd += ["--devices", devices]
     cmd += ["--threads", str(args.threads), "--inner", str(args.inner)]
+    if cfg:
+        cmd += [
+            "--streams", str(cfg.get("miner.streams", 4)),
+            "--blocks-mult", str(cfg.get("miner.blocks_mult", 1)),
+        ]
+        if cfg.get("miner.max_kernel_ms", 0):
+            cmd += ["--max-kernel-ms", str(cfg.get("miner.max_kernel_ms"))]
     print("running", " ".join(cmd))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     rate = 0.0
@@ -247,13 +321,7 @@ def cmd_mine(args: argparse.Namespace) -> int:
         print(f"key holds {submitter.address} but miner.wallet_address is {wallet}")
         return 1
 
-    gpu = GpuMiner(
-        binary=cfg.get("miner.gpu_binary", "src/cuda/hcminer-gpu"),
-        devices=str(cfg.get("miner.devices", "")),
-        threads=int(cfg.get("miner.threads", 256)),
-        blocks=int(cfg.get("miner.blocks", 0)),
-        inner=int(cfg.get("miner.inner", 256)),
-    )
+    gpu = _gpu_from_config(cfg)
     gpu.start()
 
     nonce_field = next(f for f in schema.fields if f.source == "nonce")
@@ -384,6 +452,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("preflight", help="check config, chain, wallet and GPU before mining")
     p.set_defaults(func=cmd_preflight)
+
+    p = sub.add_parser("tune", help="find the fastest launch parameters for this GPU")
+    p.add_argument("--binary")
+    p.add_argument("--devices")
+    p.add_argument("--seconds", type=float, default=2.0, help="per configuration")
+    p.add_argument("--max-kernel-ms", type=float, default=0.0)
+    p.set_defaults(func=cmd_tune)
 
     p = sub.add_parser("bench", help="measure rig hashrate")
     p.add_argument("--binary")

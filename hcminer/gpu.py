@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import queue
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,16 +20,38 @@ class Solution:
     device: int
 
 
+def resolve_binary(binary: str) -> str:
+    """Accept a POSIX-style path on Windows and add .exe when that is what exists."""
+    path = Path(binary)
+    if path.exists():
+        return str(path)
+    if sys.platform == "win32":
+        exe = path.with_suffix(".exe")
+        if exe.exists():
+            return str(exe)
+    return str(path)
+
+
 class GpuMiner:
     def __init__(self, binary: str, devices: str = "", threads: int = 256,
-                 blocks: int = 0, inner: int = 256):
-        self.binary = str(Path(binary))
+                 blocks: int = 0, inner: int = 256, streams: int = 4,
+                 blocks_mult: int = 1, max_kernel_ms: float = 0.0,
+                 extra_args: Optional[List[str]] = None):
+        self.binary = resolve_binary(binary)
         args: List[str] = [self.binary]
         if devices:
             args += ["--devices", devices]
-        args += ["--threads", str(threads), "--inner", str(inner)]
+        args += [
+            "--threads", str(threads),
+            "--inner", str(inner),
+            "--streams", str(streams),
+            "--blocks-mult", str(blocks_mult),
+        ]
         if blocks:
             args += ["--blocks", str(blocks)]
+        if max_kernel_ms:
+            args += ["--max-kernel-ms", str(max_kernel_ms)]
+        args += list(extra_args or [])
         self.args = args
         self.proc: Optional[subprocess.Popen] = None
         self.events: "queue.Queue[dict]" = queue.Queue()
@@ -37,10 +60,10 @@ class GpuMiner:
 
     def start(self) -> None:
         if not Path(self.binary).exists():
-            raise SystemExit(
-                f"GPU binary not found: {self.binary}\n"
-                "build it first:  make -C src/cuda"
-            )
+            how = (r"build it first:  scripts\build_windows.bat"
+                   if sys.platform == "win32" else
+                   "build it first:  make -C src/cuda")
+            raise SystemExit(f"GPU binary not found: {self.binary}\n{how}")
         self.proc = subprocess.Popen(
             self.args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, bufsize=1,

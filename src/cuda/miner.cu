@@ -228,8 +228,35 @@ static bool upload_job(const Job &job) {
   return true;
 }
 
-static void device_worker(int device, uint32_t threads, uint32_t blocks_arg,
-                          uint32_t inner) {
+struct Tuning {
+  uint32_t threads = 256;
+  uint32_t blocks = 0;        // 0 = derive from occupancy
+  uint32_t blocks_mult = 1;   // extra waves on top of full occupancy
+  uint32_t inner = 256;
+  uint32_t streams = 4;
+  // Windows resets the driver if a kernel on the display GPU runs longer than the
+  // TDR timeout (2s by default), so launches are kept comfortably shorter and the
+  // work per launch adapts to whatever the card turns out to be capable of.
+#ifdef _WIN32
+  double max_kernel_ms = 400.0;
+#else
+  double max_kernel_ms = 0.0;   // 0 = no cap
+#endif
+};
+
+// Grid size that fills every SM, for the block size actually in use.
+static uint32_t occupancy_blocks(uint32_t threads, const cudaDeviceProp &prop) {
+  int blocks_per_sm = 0;
+  cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm, mine_kernel,
+                                                (int)threads, 0);
+  if (blocks_per_sm <= 0) blocks_per_sm = 16;
+  return (uint32_t)blocks_per_sm * (uint32_t)prop.multiProcessorCount;
+}
+
+// One host thread per GPU. Several CUDA streams are kept in flight at once: while
+// one batch is being copied back and inspected, the next is already running, so the
+// device never waits on the host between launches.
+static void device_worker(int device, Tuning tune) {
   cudaError_t err = cudaSetDevice(device);
   if (err != cudaSuccess) {
     emit(std::string("{\"type\":\"error\",\"message\":\"cudaSetDevice: ") +
@@ -239,28 +266,64 @@ static void device_worker(int device, uint32_t threads, uint32_t blocks_arg,
 
   cudaDeviceProp prop{};
   cudaGetDeviceProperties(&prop, device);
-  uint32_t blocks = blocks_arg ? blocks_arg : (uint32_t)prop.multiProcessorCount * 32;
+  const uint32_t threads = tune.threads;
+  const uint32_t blocks =
+      tune.blocks ? tune.blocks : occupancy_blocks(threads, prop) * tune.blocks_mult;
+  const uint32_t nstreams = tune.streams ? tune.streams : 1;
 
-  Solution *d_sol = nullptr;
-  cudaMalloc(&d_sol, sizeof(Solution));
+  std::vector<cudaStream_t> streams(nstreams);
+  std::vector<Solution *> d_sol(nstreams, nullptr);
+  std::vector<Solution *> h_sol(nstreams, nullptr);
+  std::vector<cudaEvent_t> ev_start(nstreams), ev_stop(nstreams);
+  std::vector<unsigned long long> in_flight_batch(nstreams, 0);
+  std::vector<bool> busy(nstreams, false);
+
+  for (uint32_t i = 0; i < nstreams; i++) {
+    cudaStreamCreate(&streams[i]);
+    cudaMalloc(&d_sol[i], sizeof(Solution));
+    // Pinned host memory: the result copy back does not stall the stream.
+    cudaHostAlloc(&h_sol[i], sizeof(Solution), cudaHostAllocDefault);
+    memset(h_sol[i], 0, sizeof(Solution));
+    cudaEventCreate(&ev_start[i]);
+    cudaEventCreate(&ev_stop[i]);
+  }
+
+  // Adapted at runtime when a kernel duration cap is in force.
+  uint32_t inner = tune.inner;
+  const uint32_t inner_min = 16, inner_max = 1u << 20;
 
   uint64_t seen_gen = 0;
   Job local;
 
+  auto launch = [&](uint32_t i) {
+    const unsigned long long batch =
+        (unsigned long long)threads * blocks * inner;
+    const unsigned long long base = local.nonce_start + g_cursor.fetch_add(batch);
+    cudaEventRecord(ev_start[i], streams[i]);
+    cudaMemsetAsync(d_sol[i], 0, sizeof(Solution), streams[i]);
+    mine_kernel<<<blocks, threads, 0, streams[i]>>>(base, inner, d_sol[i]);
+    cudaMemcpyAsync(h_sol[i], d_sol[i], sizeof(Solution), cudaMemcpyDeviceToHost,
+                    streams[i]);
+    cudaEventRecord(ev_stop[i], streams[i]);
+    in_flight_batch[i] = batch;
+    busy[i] = true;
+  };
+
   while (!g_stop.load()) {
     uint64_t gen = g_job_gen.load();
     if (gen != seen_gen) {
+      // In-flight kernels read the job from constant memory, so let them finish
+      // before it is overwritten.
+      cudaDeviceSynchronize();
+      for (uint32_t i = 0; i < nstreams; i++) busy[i] = false;
       {
         std::lock_guard<std::mutex> lk(g_job_mu);
         local = g_job;
       }
       seen_gen = gen;
-      if (!local.valid) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        continue;
-      }
-      if (!upload_job(local)) {
+      if (!local.valid || !upload_job(local)) {
         local.valid = false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         continue;
       }
     }
@@ -269,37 +332,64 @@ static void device_worker(int device, uint32_t threads, uint32_t blocks_arg,
       continue;
     }
 
-    const unsigned long long batch =
-        (unsigned long long)threads * blocks * inner;
-    const unsigned long long base =
-        local.nonce_start + g_cursor.fetch_add(batch);
+    bool progressed = false;
+    for (uint32_t i = 0; i < nstreams && !g_stop.load(); i++) {
+      if (!busy[i]) {
+        launch(i);
+        progressed = true;
+        continue;
+      }
+      cudaError_t state = cudaStreamQuery(streams[i]);
+      if (state == cudaErrorNotReady) continue;
+      if (state != cudaSuccess) {
+        emit(std::string("{\"type\":\"error\",\"message\":\"kernel: ") +
+             cudaGetErrorString(state) + "\"}");
+        g_stop.store(true);
+        break;
+      }
 
-    cudaMemsetAsync(d_sol, 0, sizeof(Solution));
-    mine_kernel<<<blocks, threads>>>(base, inner, d_sol);
-    err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-      emit(std::string("{\"type\":\"error\",\"message\":\"kernel: ") +
-           cudaGetErrorString(err) + "\"}");
-      break;
-    }
-    g_hashes.fetch_add(batch);
+      busy[i] = false;
+      progressed = true;
+      g_hashes.fetch_add(in_flight_batch[i]);
 
-    Solution sol{};
-    cudaMemcpy(&sol, d_sol, sizeof(Solution), cudaMemcpyDeviceToHost);
-    if (sol.found && g_job_gen.load() == seen_gen) {
-      char hash_hex[67];
-      snprintf(hash_hex, sizeof(hash_hex), "0x%016llx%016llx%016llx%016llx",
-               (unsigned long long)sol.hash_be[0], (unsigned long long)sol.hash_be[1],
-               (unsigned long long)sol.hash_be[2], (unsigned long long)sol.hash_be[3]);
-      char out[256];
-      snprintf(out, sizeof(out),
-               "{\"type\":\"solution\",\"job\":%llu,\"device\":%d,\"nonce\":\"0x%016llx\",\"hash\":\"%s\"}",
-               (unsigned long long)local.id, device, sol.nonce, hash_hex);
-      emit(out);
+      if (tune.max_kernel_ms > 0) {
+        float ms = 0;
+        if (cudaEventElapsedTime(&ms, ev_start[i], ev_stop[i]) == cudaSuccess && ms > 0) {
+          // Halve on overshoot, grow slowly while well inside the budget.
+          if (ms > tune.max_kernel_ms && inner > inner_min)
+            inner = inner / 2 < inner_min ? inner_min : inner / 2;
+          else if (ms < tune.max_kernel_ms * 0.4 && inner < inner_max)
+            inner = inner * 2 > inner_max ? inner_max : inner * 2;
+        }
+      }
+
+      const Solution sol = *h_sol[i];
+      if (sol.found && g_job_gen.load() == seen_gen) {
+        char hash_hex[67];
+        snprintf(hash_hex, sizeof(hash_hex), "0x%016llx%016llx%016llx%016llx",
+                 (unsigned long long)sol.hash_be[0], (unsigned long long)sol.hash_be[1],
+                 (unsigned long long)sol.hash_be[2], (unsigned long long)sol.hash_be[3]);
+        char out[256];
+        snprintf(out, sizeof(out),
+                 "{\"type\":\"solution\",\"job\":%llu,\"device\":%d,\"nonce\":\"0x%016llx\",\"hash\":\"%s\"}",
+                 (unsigned long long)local.id, device, sol.nonce, hash_hex);
+        emit(out);
+      }
+      if (!g_stop.load()) launch(i);
     }
+
+    // Every stream is still running: yield briefly instead of spinning a core.
+    if (!progressed) std::this_thread::sleep_for(std::chrono::microseconds(200));
   }
 
-  cudaFree(d_sol);
+  cudaDeviceSynchronize();
+  for (uint32_t i = 0; i < nstreams; i++) {
+    cudaEventDestroy(ev_start[i]);
+    cudaEventDestroy(ev_stop[i]);
+    cudaStreamDestroy(streams[i]);
+    cudaFree(d_sol[i]);
+    cudaFreeHost(h_sol[i]);
+  }
 }
 
 static void reporter() {
@@ -327,10 +417,99 @@ static void reporter() {
   }
 }
 
+// Run one timed search with a given configuration and return hashes per second.
+static double run_bench(const std::vector<int> &devices, Tuning tune, double seconds) {
+  g_stop.store(false);
+  g_hashes.store(0);
+  g_cursor.store(0);
+
+  std::vector<std::thread> workers;
+  for (int d : devices) workers.emplace_back(device_worker, d, tune);
+
+  // Ignore the first stretch: streams are still filling up.
+  const double warmup = seconds * 0.35;
+  std::this_thread::sleep_for(std::chrono::duration<double>(warmup));
+  const unsigned long long start_hashes = g_hashes.load();
+  const auto t0 = std::chrono::steady_clock::now();
+
+  std::this_thread::sleep_for(std::chrono::duration<double>(seconds - warmup));
+  const double secs = std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - t0).count();
+  const unsigned long long measured = g_hashes.load() - start_hashes;
+
+  g_stop.store(true);
+  for (auto &t : workers) t.join();
+  return secs > 0 ? (double)measured / secs : 0.0;
+}
+
+static void set_dummy_job() {
+  // A target of 1 is unreachable, so a benchmark never stops early on a "solution".
+  Job j;
+  j.id = 0;
+  j.preimage.assign(116, 0xab);
+  j.vary_offset = 20;
+  j.target[0] = 0; j.target[1] = 0; j.target[2] = 0; j.target[3] = 1;
+  j.nonce_start = 0;
+  j.valid = true;
+  {
+    std::lock_guard<std::mutex> lk(g_job_mu);
+    g_job = j;
+  }
+  g_job_gen.fetch_add(1);
+}
+
+// Sweep the launch parameters that matter and report the fastest combination.
+static int autotune(const std::vector<int> &devices, double per_config) {
+  set_dummy_job();
+
+  const uint32_t thread_opts[] = {128, 256, 512};
+  const uint32_t mult_opts[] = {1, 2};
+  const uint32_t inner_opts[] = {256, 1024};
+  const uint32_t stream_opts[] = {2, 4};
+
+  Tuning best;
+  double best_rate = 0;
+  int tested = 0;
+
+  for (uint32_t threads : thread_opts)
+    for (uint32_t mult : mult_opts)
+      for (uint32_t inner : inner_opts)
+        for (uint32_t streams : stream_opts) {
+          Tuning tune;
+          tune.threads = threads;
+          tune.blocks_mult = mult;
+          tune.inner = inner;
+          tune.streams = streams;
+
+          const double rate = run_bench(devices, tune, per_config);
+          tested++;
+          char out[256];
+          snprintf(out, sizeof(out),
+                   "{\"type\":\"tune_result\",\"threads\":%u,\"blocks_mult\":%u,"
+                   "\"inner\":%u,\"streams\":%u,\"hashrate\":%.0f}",
+                   threads, mult, inner, streams, rate);
+          emit(out);
+
+          if (rate > best_rate) {
+            best_rate = rate;
+            best = tune;
+          }
+        }
+
+  char out[256];
+  snprintf(out, sizeof(out),
+           "{\"type\":\"tune\",\"tested\":%d,\"threads\":%u,\"blocks_mult\":%u,"
+           "\"inner\":%u,\"streams\":%u,\"hashrate\":%.0f}",
+           tested, best.threads, best.blocks_mult, best.inner, best.streams, best_rate);
+  emit(out);
+  return best_rate > 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
   std::vector<int> devices;
-  uint32_t threads = 256, blocks = 0, inner = 256;
+  Tuning tune;
   double bench_seconds = 0;
+  double tune_seconds = 0;
 
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i];
@@ -343,13 +522,33 @@ int main(int argc, char **argv) {
           cur.clear();
         } else cur.push_back(c);
       }
-    } else if (a == "--threads") threads = (uint32_t)atoi(next().c_str());
-    else if (a == "--blocks") blocks = (uint32_t)atoi(next().c_str());
-    else if (a == "--inner") inner = (uint32_t)atoi(next().c_str());
+    } else if (a == "--threads") tune.threads = (uint32_t)atoi(next().c_str());
+    else if (a == "--blocks") tune.blocks = (uint32_t)atoi(next().c_str());
+    else if (a == "--blocks-mult") tune.blocks_mult = (uint32_t)atoi(next().c_str());
+    else if (a == "--inner") tune.inner = (uint32_t)atoi(next().c_str());
+    else if (a == "--streams") tune.streams = (uint32_t)atoi(next().c_str());
+    else if (a == "--max-kernel-ms") tune.max_kernel_ms = atof(next().c_str());
     else if (a == "--bench") bench_seconds = atof(next().c_str());
-    else if (a == "--help") {
-      printf("usage: hcminer-gpu [--devices 0,1,2,3] [--threads N] [--blocks N] "
-             "[--inner N] [--bench SECONDS]\n");
+    else if (a == "--autotune") {
+      std::string v = next();
+      tune_seconds = v.empty() ? 2.0 : atof(v.c_str());
+      if (tune_seconds <= 0) tune_seconds = 2.0;
+    } else if (a == "--list-devices") {
+      int n = 0;
+      cudaGetDeviceCount(&n);
+      for (int d = 0; d < n; d++) {
+        cudaDeviceProp prop{};
+        cudaGetDeviceProperties(&prop, d);
+        printf("device %d: %s, sm_%d%d, %d SMs, %.1f GB\n", d, prop.name, prop.major,
+               prop.minor, prop.multiProcessorCount,
+               (double)prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0));
+      }
+      return 0;
+    } else if (a == "--help") {
+      printf("usage: hcminer-gpu [--devices 0,1,2,3] [--threads N] [--blocks N]\n"
+             "                   [--blocks-mult N] [--inner N] [--streams N]\n"
+             "                   [--max-kernel-ms MS] [--bench SECONDS]\n"
+             "                   [--autotune SECONDS] [--list-devices]\n");
       return 0;
     }
   }
@@ -362,77 +561,61 @@ int main(int argc, char **argv) {
   if (devices.empty())
     for (int i = 0; i < count; i++) devices.push_back(i);
 
-  if (bench_seconds > 0) {
-    // Unreachable target: measures raw search speed without ever "finding" one.
-    Job j;
-    j.id = 0;
-    j.preimage.assign(116, 0xab);
-    j.vary_offset = 20;
-    j.target[0] = 0; j.target[1] = 0; j.target[2] = 0; j.target[3] = 1;
-    j.nonce_start = 0;
-    j.valid = true;
-    {
-      std::lock_guard<std::mutex> lk(g_job_mu);
-      g_job = j;
-    }
-    g_job_gen.fetch_add(1);
-  }
-
   char ready[96];
   snprintf(ready, sizeof(ready), "{\"type\":\"ready\",\"devices\":%zu}", devices.size());
   emit(ready);
 
-  std::vector<std::thread> workers;
-  for (int d : devices)
-    workers.emplace_back(device_worker, d, threads, blocks, inner);
-  std::thread rep(reporter);
+  if (tune_seconds > 0) return autotune(devices, tune_seconds);
 
   if (bench_seconds > 0) {
-    auto t0 = std::chrono::steady_clock::now();
-    std::this_thread::sleep_for(std::chrono::duration<double>(bench_seconds));
-    double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    g_stop.store(true);
-    char out[160];
+    set_dummy_job();
+    const double rate = run_bench(devices, tune, bench_seconds);
+    char out[192];
     snprintf(out, sizeof(out),
              "{\"type\":\"bench\",\"seconds\":%.2f,\"hashes\":%llu,\"hashrate\":%.0f}",
-             secs, (unsigned long long)g_hashes.load(), (double)g_hashes.load() / secs);
+             bench_seconds, (unsigned long long)g_hashes.load(), rate);
     emit(out);
-  } else {
-    std::string line;
-    while (std::getline(std::cin, line)) {
-      std::string cmd = json_str(line, "cmd");
-      if (cmd == "stop") break;
-      if (cmd != "job") continue;
-
-      Job j;
-      j.id = json_num(line, "id", 0);
-      if (!hex_to_bytes(json_str(line, "preimage"), j.preimage)) {
-        emit("{\"type\":\"error\",\"message\":\"bad preimage hex\"}");
-        continue;
-      }
-      j.vary_offset = (uint32_t)json_num(line, "vary_offset", 0);
-      std::vector<uint8_t> tgt;
-      if (!hex_to_bytes(json_str(line, "target"), tgt) || tgt.size() != 32) {
-        emit("{\"type\":\"error\",\"message\":\"target must be 32 bytes\"}");
-        continue;
-      }
-      for (int w = 0; w < 4; w++) {
-        uint64_t v = 0;
-        for (int b = 0; b < 8; b++) v = (v << 8) | tgt[w * 8 + b];
-        j.target[w] = v;
-      }
-      j.nonce_start = json_num(line, "nonce_start", 0);
-      j.valid = true;
-
-      {
-        std::lock_guard<std::mutex> lk(g_job_mu);
-        g_job = j;
-      }
-      g_cursor.store(0);
-      g_job_gen.fetch_add(1);
-    }
-    g_stop.store(true);
+    return 0;
   }
+
+  std::vector<std::thread> workers;
+  for (int d : devices) workers.emplace_back(device_worker, d, tune);
+  std::thread rep(reporter);
+
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    std::string cmd = json_str(line, "cmd");
+    if (cmd == "stop") break;
+    if (cmd != "job") continue;
+
+    Job j;
+    j.id = json_num(line, "id", 0);
+    if (!hex_to_bytes(json_str(line, "preimage"), j.preimage)) {
+      emit("{\"type\":\"error\",\"message\":\"bad preimage hex\"}");
+      continue;
+    }
+    j.vary_offset = (uint32_t)json_num(line, "vary_offset", 0);
+    std::vector<uint8_t> tgt;
+    if (!hex_to_bytes(json_str(line, "target"), tgt) || tgt.size() != 32) {
+      emit("{\"type\":\"error\",\"message\":\"target must be 32 bytes\"}");
+      continue;
+    }
+    for (int w = 0; w < 4; w++) {
+      uint64_t v = 0;
+      for (int b = 0; b < 8; b++) v = (v << 8) | tgt[w * 8 + b];
+      j.target[w] = v;
+    }
+    j.nonce_start = json_num(line, "nonce_start", 0);
+    j.valid = true;
+
+    {
+      std::lock_guard<std::mutex> lk(g_job_mu);
+      g_job = j;
+    }
+    g_cursor.store(0);
+    g_job_gen.fetch_add(1);
+  }
+  g_stop.store(true);
 
   for (auto &t : workers) t.join();
   rep.join();
