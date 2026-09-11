@@ -72,11 +72,8 @@ def main() -> int:
             if int.from_bytes(digest, "big") < target:
                 emit({"type": "solution", "job": current["id"], "device": 0,
                       "nonce": f"0x{nonce:016x}", "hash": "0x" + digest.hex()})
-                with _lock:
-                    if _job["job"] is current:
-                        _job["job"] = None
-                current = None
-                break
+                # Like the real miner: keep searching, the supervisor decides what
+                # to do with a solution.
             nonce += 1
 
         now = time.time()

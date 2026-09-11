@@ -11,12 +11,23 @@ from typing import Any, List, Sequence
 from .keccak import keccak256
 
 
+def is_raw_selector(signature: str) -> bool:
+    """True for '0x39148c53' - a selector whose function name is unknown."""
+    text = signature.strip().lower()
+    return (text.startswith("0x") and len(text) == 10
+            and all(c in "0123456789abcdef" for c in text[2:]))
+
+
 def function_selector(signature: str) -> bytes:
-    """'mine(uint256)' -> 4-byte selector."""
+    """'mine(uint256)' -> 4-byte selector. A raw '0x...' selector passes through."""
+    if is_raw_selector(signature):
+        return bytes.fromhex(signature.strip()[2:])
     return keccak256(signature.replace(" ", "").encode())[:4]
 
 
 def signature_types(signature: str) -> List[str]:
+    if is_raw_selector(signature):
+        return []
     inner = signature[signature.index("(") + 1 : signature.rindex(")")].strip()
     return [t.strip() for t in inner.split(",") if t.strip()]
 

@@ -89,6 +89,103 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_autoconfig(args: argparse.Namespace) -> int:
+    """Resolve the entire contract wiring from chain data and write config.toml."""
+    from .autoconfig import (collect_sample, identify_target_and_price, render_config,
+                             resolve, state_views)
+    from .discover import abi_signature, describe_abi, fetch_abi, find_mint_txs
+
+    explorer = args.explorer
+    rpc = Rpc(args.rpc)
+    address = args.address
+
+    print(f"chain      {args.rpc}")
+    try:
+        chain_id = rpc.chain_id()
+    except Exception as exc:
+        print(f"cannot reach the RPC: {exc}")
+        return 1
+    print(f"chain id   {chain_id}")
+    print(f"contract   {address}\n")
+
+    print("fetching ABI ...")
+    abi_entries = fetch_abi(explorer, address)
+    report = describe_abi(abi_entries)
+    views = state_views(abi_entries)
+    print(f"  {len(report.mint_candidates)} mint candidate(s), {len(views)} state getter(s)")
+
+    candidates = report.mint_candidates
+    if args.mint_signature:
+        candidates = [e for e in abi_entries if e.get("type") == "function"
+                      and abi_signature(e) == args.mint_signature]
+        if not candidates:
+            print(f"no ABI function matches {args.mint_signature}")
+            return 1
+
+    for entry in candidates:
+        signature = abi_signature(entry)
+        print(f"\ntrying {signature}")
+        try:
+            txs = find_mint_txs(explorer, address, entry, limit=args.samples)
+        except Exception as exc:
+            print(f"  explorer lookup failed: {exc}")
+            continue
+        if len(txs) < 1:
+            print("  no accepted calls found")
+            continue
+        print(f"  {len(txs)} accepted mint(s); gathering candidate values ...")
+
+        samples = []
+        for tx in txs:
+            try:
+                samples.append(collect_sample(rpc, address, tx, entry, views))
+            except Exception as exc:
+                print(f"  {tx['hash']}: {exc}")
+        if not samples:
+            continue
+        print(f"  {len(samples[0].words)} candidate 32-byte values per mint, "
+              f"{len(samples[0].nonce_candidates)} nonce argument(s)")
+
+        print("  searching for the layout that reproduces the difficulty ...")
+        found = resolve(samples, entry, min_zero_bits=args.min_zero_bits)
+        if not found:
+            print("  no combination reproduces it for this function")
+            continue
+
+        best = found[0]
+        identify_target_and_price(samples[0], best.zero_bits, best)
+        print(f"\nRESOLVED ({len(found)} matching combination"
+              f"{'s' if len(found) > 1 else ''}):")
+        print(best.describe())
+        if len(found) > 1:
+            print("\n  other matches (same difficulty, different labels):")
+            for other in found[1:4]:
+                print(f"    {other.schema}  prev={other.prev_work_label} "
+                      f"anchor={other.anchor_label}")
+
+        text = render_config(address, args.rpc, chain_id, explorer, best, args.wallet)
+        out = Path(args.out)
+        if out.exists() and not args.force:
+            alt = out.with_suffix(".generated.toml")
+            alt.write_text(text)
+            print(f"\n{out} exists — wrote {alt} instead (use --force to overwrite)")
+        else:
+            out.write_text(text)
+            print(f"\nwrote {out}")
+
+        missing = [n for n, v in (("target", best.target_signature),
+                                  ("price", best.price_signature)) if not v]
+        if missing:
+            print(f"could not identify: {', '.join(missing)} — fill in the REPLACE_ME "
+                  "entries from the getter list in the ABI")
+        print("\nNext:  hcminer preflight   then   hcminer mine --dry-run")
+        return 0
+
+    print("\nNothing resolved. Re-run with --mint-signature for a specific function, "
+          "or raise --samples.")
+    return 1
+
+
 def cmd_solve_schema(args: argparse.Namespace) -> int:
     from .discover import Observation, solve_schema
 
@@ -264,6 +361,80 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0 if rate else 1
 
 
+def cmd_ratecheck(args: argparse.Namespace) -> int:
+    """Measure hashrate from solutions actually found, not from the miner's counter.
+
+    Mining an easy target turns the search into a Poisson process: with a target of
+    `bits` zero bits, each hash succeeds with probability 2^-bits, so
+    hashrate = solutions * 2^bits / elapsed. Every solution is also re-hashed on the
+    CPU, which catches a GPU that is fast because it is computing the wrong thing
+    (an unstable overclock, or a miscompiled kernel).
+    """
+    cfg = Config.load(args.config) if Path(args.config).exists() else None
+    binary = args.binary or (cfg.get("miner.gpu_binary", "src/cuda/hcminer-gpu")
+                             if cfg else "src/cuda/hcminer-gpu")
+
+    from .gpu import GpuMiner
+    from .keccak import keccak256
+
+    gpu = (_gpu_from_config(cfg) if cfg else
+           GpuMiner(binary=binary, devices=args.devices or ""))
+    gpu.start()
+
+    preimage = bytearray(secrets.token_bytes(116))
+    vary_offset = 20
+    preimage[vary_offset:vary_offset + 8] = b"\x00" * 8
+    target = 1 << (256 - args.bits)
+
+    print(f"counting solutions at {args.bits} zero bits for {args.seconds:.0f}s ...")
+    gpu.submit_job(1, bytes(preimage), vary_offset, target)
+
+    start = time.time()
+    solutions = 0
+    bad = 0
+    reported = 0.0
+    while time.time() - start < args.seconds:
+        for event in gpu.poll(timeout=0.5):
+            kind = event.get("type")
+            if kind == "status":
+                reported = max(reported, float(event.get("hashrate", 0)))
+            elif kind == "error":
+                print("  GPU error:", event["message"])
+            elif kind == "exit":
+                print("  GPU process exited early:", gpu.stderr_tail())
+                return 1
+            elif kind == "solution":
+                candidate = bytearray(preimage)
+                nonce = int(event["nonce"], 16)
+                candidate[vary_offset:vary_offset + 8] = nonce.to_bytes(8, "big")
+                digest = keccak256(bytes(candidate))
+                if "0x" + digest.hex() != event["hash"] or int.from_bytes(digest, "big") >= target:
+                    bad += 1
+                else:
+                    solutions += 1
+    elapsed = time.time() - start
+    gpu.stop()
+
+    if bad:
+        print(f"\n{bad} of {solutions + bad} solutions did NOT verify on the CPU.")
+        print("The GPU is producing wrong hashes — back off any overclock before mining.")
+        return 1
+    if solutions < 5:
+        print(f"\nonly {solutions} solutions in {elapsed:.0f}s — rerun with "
+              f"--bits {max(args.bits - 4, 8)} or a longer --seconds for a usable estimate")
+        return 1
+
+    measured = solutions * (2 ** args.bits) / elapsed
+    rel = 1.96 / (solutions ** 0.5)     # 95% interval for a Poisson count
+    print(f"\nsolutions           {solutions} in {elapsed:.0f}s, all verified on CPU")
+    print(f"measured hashrate   {measured / 1e9:.3f} GH/s  "
+          f"(+/-{measured * rel / 1e9:.3f} at 95% confidence)")
+    if reported:
+        print(f"miner's own counter {reported / 1e9:.3f} GH/s  "
+              f"({reported / measured * 100:.0f}% of measured)")
+    return 0
+
+
 def cmd_econ(args: argparse.Namespace) -> int:
     cfg = Config.load(args.config) if Path(args.config).exists() else None
     zero_bits = args.zero_bits
@@ -427,6 +598,8 @@ def _job_values(wallet: str, session_prefix: int, state: MiningState) -> Dict[st
         "nonce": session_prefix << 64,
         "prev_work": state.prev_work,
         "anchor": state.anchor,
+        # not part of every hash, but some mint calls take it as an argument
+        "anchor_block": state.anchor_block,
     }
 
 
@@ -446,6 +619,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=5)
     p.add_argument("--out", default="discover")
     p.set_defaults(func=cmd_discover)
+
+    p = sub.add_parser("autoconfig",
+                       help="resolve contract wiring from chain data and write config.toml")
+    p.add_argument("--address", default="0xCA75DF55Cc9C476DB27a7375D1fc8E794cf80721")
+    p.add_argument("--rpc", default="https://rpc.mainnet.chain.robinhood.com")
+    p.add_argument("--explorer", default="https://robinhoodchain.blockscout.com")
+    p.add_argument("--mint-signature")
+    p.add_argument("--samples", type=int, default=2)
+    p.add_argument("--min-zero-bits", type=int, default=40)
+    p.add_argument("--wallet", default="")
+    p.add_argument("--out", default="config.toml")
+    p.add_argument("--force", action="store_true")
+    p.set_defaults(func=cmd_autoconfig)
 
     p = sub.add_parser("solve-schema", help="recover the hashing layout from a past mint")
     p.add_argument("--observations", required=True)
@@ -474,6 +660,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--threads", type=int, default=256)
     p.add_argument("--inner", type=int, default=256)
     p.set_defaults(func=cmd_bench)
+
+    p = sub.add_parser("ratecheck",
+                       help="measure hashrate from real solutions and verify them on CPU")
+    p.add_argument("--binary")
+    p.add_argument("--devices")
+    p.add_argument("--bits", type=int, default=32, help="difficulty for the measurement")
+    p.add_argument("--seconds", type=float, default=60)
+    p.set_defaults(func=cmd_ratecheck)
 
     p = sub.add_parser("econ", help="profitability of renting GPUs for this difficulty")
     p.add_argument("--hashrate", type=float, required=True, help="hashes/second, whole rig")

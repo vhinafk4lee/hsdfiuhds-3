@@ -19,6 +19,12 @@ python3 tests/test_gpu_protocol.py
 echo "== schema recovery from a synthetic solved mint =="
 python3 tests/test_schema_recovery.py
 
+echo "== automatic contract wiring from chain-shaped data =="
+python3 tests/test_autoconfig.py
+
+echo "== real Hashcats wiring (layout, selectors, mint calldata) =="
+python3 tests/test_hashcats_wiring.py
+
 if command -v nvcc >/dev/null 2>&1; then
   echo "== CUDA compile check =="
   ARCH="${CUDA_ARCH:-89}"

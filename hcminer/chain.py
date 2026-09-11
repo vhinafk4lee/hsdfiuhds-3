@@ -15,18 +15,22 @@ ARBSYS_ADDRESS = "0x0000000000000000000000000000000000000064"
 class MiningState:
     target: int          # 256-bit threshold; a valid hash must be strictly below it
     prev_work: str       # bytes32 hex
-    anchor: str          # bytes32 hex
+    anchor: str          # bytes32 hex - the value that goes INTO the hash
     price_wei: int
     block: int
+    anchor_block: int = 0   # some contracts also want the anchor's height in the mint call
 
     @property
     def zero_bits(self) -> int:
         return 256 - max(self.target, 1).bit_length()
 
     def describe(self) -> str:
+        anchor = f"anchor={self.anchor}"
+        if self.anchor_block:
+            anchor += f" (block {self.anchor_block})"
         return (
             f"block={self.block} target=0x{self.target:064x} (~{self.zero_bits} zero bits)\n"
-            f"prev_work={self.prev_work}\nanchor={self.anchor}\n"
+            f"prev_work={self.prev_work}\n{anchor}\n"
             f"price={self.price_wei / 1e18:.6f} ETH"
         )
 
@@ -45,16 +49,38 @@ class Chain:
 
     # --- low level ------------------------------------------------------------
 
+    @staticmethod
+    def _split_word(signature: str) -> tuple:
+        """'currentAnchor()#1' -> ('currentAnchor()', 1).
+
+        Getters that return several values are addressed by output word index, so a
+        contract returning (uint256 anchorBlock, bytes32 anchorHash) needs no code
+        change - just '#0' or '#1' in the config.
+        """
+        if "#" in signature:
+            base, index = signature.rsplit("#", 1)
+            return base.strip(), int(index)
+        return signature.strip(), 0
+
     def _view(self, signature: str, args: Optional[list] = None, block: str = "latest") -> bytes:
-        data = abi.calldata(signature, args or [])
+        base, _ = self._split_word(signature)
+        data = abi.calldata(base, args or [])
         return self.rpc.eth_call(self.contract, data, block)
 
+    def _view_word(self, signature: str, block: str = "latest") -> bytes:
+        _, index = self._split_word(signature)
+        raw = self._view(signature, block=block)
+        word = raw[index * 32 : (index + 1) * 32]
+        if len(word) < 32:
+            raise RuntimeError(
+                f"{signature}: returned {len(raw)} bytes, no word #{index} in it")
+        return word
+
     def _view_uint(self, signature: str, block: str = "latest") -> int:
-        return abi.decode(["uint256"], self._view(signature, block=block))[0]
+        return int.from_bytes(self._view_word(signature, block), "big")
 
     def _view_bytes32(self, signature: str, block: str = "latest") -> str:
-        raw = self._view(signature, block=block)
-        return "0x" + raw[:32].hex()
+        return "0x" + self._view_word(signature, block).hex()
 
     # --- state ----------------------------------------------------------------
 
@@ -72,8 +98,19 @@ class Chain:
 
     def price_wei(self, block: str = "latest") -> int:
         signature = self.cfg.get("contract.state.price")
+        if signature:
+            return self._view_uint(signature, block)
+        # No getter: the entry price is a fixed amount in the config.
+        value = str(self.cfg.get("contract.mint.value", "")).strip()
+        if value.isdigit():
+            return int(value)
+        return int(self.cfg.get("contract.mint.value_wei", 0))
+
+    def anchor_block(self, block: str = "latest") -> int:
+        """Height that goes with the anchor, when the mint call wants it."""
+        signature = self.cfg.get("contract.state.anchor_block")
         if not signature:
-            return int(self.cfg.get("contract.mint.value_wei", 0))
+            return 0
         return self._view_uint(signature, block)
 
     def anchor(self, block: str = "latest") -> str:
@@ -107,4 +144,5 @@ class Chain:
             anchor=self.anchor(),
             price_wei=self.price_wei(),
             block=block,
+            anchor_block=self.anchor_block(),
         )

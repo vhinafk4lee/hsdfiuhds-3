@@ -1,0 +1,61 @@
+# Hashcats on Robinhood Chain - real contract wiring.
+#
+# The function selectors below were read off accepted mint transactions on chain
+# (prevWork() = 0xa4da5da2, currentTarget() = 0x39148c53, currentAnchor() = 0xcd809b11,
+# mine(uint256,uint256) = 0x071e9503) and the field layout is the one the contract
+# hashes: keccak256(miner || nonce || prevWork || anchor), 116 bytes, nonce big-endian.
+#
+# Copy to config.toml, put your wallet address in [miner], and run:
+#   hcminer preflight
+#   hcminer mine --dry-run
+
+[chain]
+rpc_url  = "https://rpc.mainnet.chain.robinhood.com"
+chain_id = 4663
+explorer = "https://robinhoodchain.blockscout.com"
+
+[contract]
+address = "0xCA75DF55Cc9C476DB27a7375D1fc8E794cf80721"
+
+[contract.state]
+target       = "currentTarget()"      # uint256 threshold; a valid hash must be below it
+prev_work    = "prevWork()"           # bytes32, the previous cat's work
+anchor       = "currentAnchor()#1"    # returns (uint256 height, bytes32 hash) - word 1
+anchor_block = "currentAnchor()#0"    # word 0, passed to the mint call
+price        = ""                     # no price getter found; fixed amount below
+
+[contract.mint]
+signature = "mine(uint256,uint256)"
+args      = ["nonce", "anchor_block"]
+# Entry price for the current epoch, 0.01008 ETH. It doubles each epoch, so when a
+# mint starts reverting in simulation, raise this - nothing is sent until the
+# simulated call succeeds, so a stale value costs nothing.
+value     = "10080000000000000"
+
+[pow]
+schema         = ["miner:addr20", "nonce:u256", "prev_work:b32", "anchor:b32"]
+verified       = true
+target_is_bits = false
+anchor_source  = "contract"
+anchor_offset  = 1
+
+[miner]
+wallet_address   = "0x0000000000000000000000000000000000000000"   # <- your address
+private_key_env  = "HC_PRIVATE_KEY"
+gpu_binary       = "src/cuda/hcminer-gpu"
+devices          = "0"
+threads          = 256
+blocks           = 0
+blocks_mult      = 1
+inner            = 256
+streams          = 4
+max_kernel_ms    = 400      # Windows: keeps kernels under the driver TDR timeout
+poll_seconds     = 5
+priority_fee_gwei = 0.01
+
+[limits]
+dry_run            = true
+max_mints          = 1
+max_spend_eth      = 0.05
+max_gas_price_gwei = 5
+max_gas            = 2000000

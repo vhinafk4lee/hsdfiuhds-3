@@ -131,7 +131,35 @@ powershell -ExecutionPolicy Bypass -File scripts\windows_maxperf.ps1 -SetTdrDela
 
 ---
 
-## Рабочий порядок
+## Готовый конфиг (самый быстрый путь)
+
+Параметры контракта уже определены и лежат в `config.hashcats.toml`:
+селекторы `prevWork()`, `currentTarget()`, `currentAnchor()`, минт
+`mine(uint256,uint256)`, вход 0.01008 ETH и схема
+`keccak256(miner || nonce || prevWork || anchor)` — 116 байт, nonce big-endian в
+байтах 20..51, карта перебирает байты 44..51.
+
+```bat
+copy config.hashcats.toml config.toml
+:: вписать свой адрес в [miner] wallet_address
+python -m hcminer.cli preflight
+python -m hcminer.cli mine --dry-run
+```
+
+Если контракт с тех пор изменился (например, выросла цена входа), `mine` это
+покажет: перед отправкой каждая транзакция симулируется через `eth_call`, и
+неверный параметр даёт revert в симуляции, не стоящий ни газа, ни ETH.
+
+Определить всё заново с нуля можно одной командой — она сама найдёт ABI, возьмёт
+недавние принятые минты, переберёт схемы и роли значений и запишет конфиг:
+
+```bat
+python -m hcminer.cli autoconfig --wallet 0xВашАдрес
+```
+
+---
+
+## Рабочий порядок (ручной разбор, если autoconfig не справился)
 
 ### 1. Разобрать контракт
 
