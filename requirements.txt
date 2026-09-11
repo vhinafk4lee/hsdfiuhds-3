@@ -1,0 +1,4 @@
+# keccak256 (either backend works; pycryptodome is the default)
+pycryptodome>=3.20
+# only needed to sign and broadcast the mint transaction
+eth-account>=0.11

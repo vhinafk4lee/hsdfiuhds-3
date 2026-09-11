@@ -1,0 +1,6 @@
+config.toml
+observations.json
+discover/
+__pycache__/
+*.pyc
+src/cuda/hcminer-gpu

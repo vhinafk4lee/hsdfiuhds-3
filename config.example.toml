@@ -1,0 +1,52 @@
+# Copy to config.toml and fill in the parts that `hcminer discover` reports.
+# Everything the contract-specific logic needs lives here, not in the code.
+
+[chain]
+rpc_url  = "https://rpc.mainnet.chain.robinhood.com"
+chain_id = 4663
+explorer = "https://robinhoodchain.blockscout.com"
+
+[contract]
+address = "0xCA75DF55Cc9C476DB27a7375D1fc8E794cf80721"   # Hashcats collection
+
+# View functions that expose the mining state. The names below are PLACEHOLDERS:
+# run `hcminer discover` and replace them with the real signatures from the ABI.
+[contract.state]
+target    = "currentTarget()"    # -> uint256 threshold (or a zero-bit count, see pow.target_is_bits)
+prev_work = "lastWork()"         # -> bytes32, the previous cat's work
+anchor    = "currentAnchor()"    # -> bytes32, recent block hash (see pow.anchor_source)
+price     = "mintPrice()"        # -> uint256 wei, current epoch entry price
+
+# How a solution is submitted.
+[contract.mint]
+signature = "mine(uint256)"      # real signature from the ABI
+args      = ["nonce"]            # per argument: nonce | miner | prev_work | anchor | hash
+value     = "price"              # msg.value: "price" (use contract.state.price), "0", or wei
+
+[pow]
+# Field order and encoding inside keccak256(...). Resolve it with
+#   hcminer solve-schema --observations observations.json
+# and only then set verified = true.
+schema        = ["miner:addr20", "nonce:u256", "prev_work:b32", "anchor:b32"]
+verified      = false            # `hcminer mine` refuses to start until this is true
+target_is_bits = false           # true if contract.state.target returns leading-zero bits
+anchor_source = "contract"       # "contract" | "arbsys" | "block"
+anchor_offset = 1                # blocks back, for arbsys/block anchor sources
+
+[miner]
+wallet_address   = "0x0000000000000000000000000000000000000000"
+private_key_env  = "HC_PRIVATE_KEY"   # key is read from this env var, never from disk
+gpu_binary       = "src/cuda/hcminer-gpu"
+devices          = "0,1,2,3"
+threads          = 256
+inner            = 256                # nonces per thread per kernel launch
+poll_seconds     = 5                  # how often to re-read chain state
+priority_fee_gwei = 0.01
+
+# Hard stops. Keep dry_run = true until a dry run prints a transaction you are happy with.
+[limits]
+dry_run            = true
+max_mints          = 1
+max_spend_eth      = 0.05
+max_gas_price_gwei = 5
+max_gas            = 2000000

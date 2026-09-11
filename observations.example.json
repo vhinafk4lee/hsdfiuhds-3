@@ -1,0 +1,9 @@
+[
+  {
+    "_comment": "One accepted mint, as it existed on chain. miner/nonce come from the mint transaction; prev_work/anchor are the contract state in the block BEFORE it. Delete this comment line before use.",
+    "miner": "0x0000000000000000000000000000000000000000",
+    "nonce": 0,
+    "prev_work": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "anchor": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  }
+]
