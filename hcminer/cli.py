@@ -147,6 +147,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Read-only sanity pass over config, chain, wallet and GPU before spending."""
+    from .preflight import Preflight
+
+    cfg = Config.load(args.config)
+    want_send = not bool(cfg.get("limits.dry_run", True))
+    print(f"preflight for {cfg.path} "
+          f"({'LIVE — transactions will be sent' if want_send else 'dry-run mode'})\n")
+    return Preflight(cfg, want_send).run()
+
+
 def cmd_bench(args: argparse.Namespace) -> int:
     cfg = Config.load(args.config) if Path(args.config).exists() else None
     binary = args.binary or (cfg.get("miner.gpu_binary") if cfg else "src/cuda/hcminer-gpu")
@@ -370,6 +381,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--observations", required=True)
     p.add_argument("--min-zero-bits", type=int, default=40)
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("preflight", help="check config, chain, wallet and GPU before mining")
+    p.set_defaults(func=cmd_preflight)
 
     p = sub.add_parser("bench", help="measure rig hashrate")
     p.add_argument("--binary")

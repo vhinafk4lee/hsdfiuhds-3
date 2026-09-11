@@ -116,10 +116,17 @@ python3 -m hcminer.cli solve-schema --observations observations.json --min-zero-
 python3 -m hcminer.cli verify --observations observations.json   # должно быть OK
 # затем в config.toml:  [pow] verified = true
 
+python3 -m hcminer.cli preflight          # конфиг, RPC, контракт, кошелёк, баланс, лимиты, GPU
 python3 -m hcminer.cli mine --dry-run     # печатает готовую транзакцию, ничего не шлёт
 export HC_PRIVATE_KEY=0x...               # ключ только в окружении
 python3 -m hcminer.cli mine               # боевой запуск (limits.dry_run = false)
 ```
+
+`preflight` — read-only: ничего не подписывает и не шлёт. Он ловит ровно те ошибки,
+которые стоят денег: chain id не тот, в `contract.address` нет кода, target или
+цена читаются мусором, ключ в окружении не от того кошелька, на балансе не хватает
+на минт с газом, `max_spend_eth` ниже цены входа (тогда каждый минт будет
+блокироваться), майнер под GPU не собран.
 
 Цикл майнинга: читает состояние → раздаёт job на все GPU → найденное решение
 пересчитывает на CPU → симулирует `eth_call` (revert ничего не стоит) →
@@ -158,7 +165,9 @@ hcminer/discover.py          ABI с эксплорера + восстановл�
 hcminer/chain.py             чтение target / prev_work / anchor / price
 hcminer/tx.py                сборка, симуляция, подпись, лимиты трат
 hcminer/economics.py         аренда против стоимости входа
-hcminer/cli.py               state | discover | solve-schema | verify | bench | econ | mine
+hcminer/preflight.py         сквозная проверка перед первым боевым минтом
+hcminer/cli.py               state | discover | solve-schema | verify | preflight |
+                             bench | econ | mine
 tests/                       всё, что проверяется без видеокарты
 ```
 
