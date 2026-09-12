@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""GPU worker: searches SHA-256 proofs for the Hash Broker contract.
+"""GPU worker: searches SHA-256 proofs for the Hash Broker mint.
 
-The worker never signs or broadcasts anything. It reads a job file published by
-the controller and writes unsigned candidate solutions next to it.
+The worker never signs or broadcasts anything. It reads the job file published
+by the feed and writes an unsigned solution file for the signer to pick up.
 """
 from __future__ import annotations
 
@@ -26,23 +26,20 @@ from sha256_cuda import CUDA_SOURCE
 MESSAGE_WORDS = 32
 
 
-def message_buffer(wallet: str, prev: str, anchor: str) -> tuple[np.ndarray, int]:
-    words = powlib.padded_words(wallet, prev, anchor)
+def message_buffer(wallet: str, challenge: str) -> tuple[np.ndarray, int]:
+    words = powlib.padded_words(wallet, challenge)
     if len(words) > MESSAGE_WORDS:
         raise SystemExit(
             f"preimage of {PROTOCOL.preimage_size} bytes needs more than two SHA-256 blocks"
         )
     blocks = len(words) // 16
-    padded = words + [0] * (MESSAGE_WORDS - len(words))
-    return np.array(padded, dtype=np.uint32), blocks
+    return np.array(words + [0] * (MESSAGE_WORDS - len(words)), dtype=np.uint32), blocks
 
 
 def target_words(target: int) -> np.ndarray:
     raw = int(target).to_bytes(32, "big")
-    return np.array(
-        [int.from_bytes(raw[index:index + 4], "big") for index in range(0, 32, 4)],
-        dtype=np.uint32,
-    )
+    return np.array([int.from_bytes(raw[index:index + 4], "big") for index in range(0, 32, 4)],
+                    dtype=np.uint32)
 
 
 def digest_from_words(words) -> bytes:
@@ -87,22 +84,26 @@ def wait_for_shared_job(job_file: Path, wallet: str, timeout: float = 30.0) -> d
     raise SystemExit(f"shared job unavailable: {error}")
 
 
-def self_test(hash_one, message_gpu, blocks: int, doubled: int,
-              stream_word: int, counter_word: int, wallet: str, job: dict) -> None:
+def self_test(hash_one, message_gpu, blocks: int, doubled: int, stream_word: int,
+              counter_word: int, wallet: str, challenge: str) -> None:
+    """A GPU that disagrees with hashlib is a hardware fault, not a miner."""
     stream, counter = 0x13579BDF, 0x2468ACE0
     output = cp.zeros(8, dtype=cp.uint32)
-    hash_one(
-        (1,), (1,),
-        (message_gpu, np.int32(blocks), np.int32(doubled),
-         np.int32(stream_word), np.int32(counter_word),
-         np.uint32(stream), np.uint32(counter), output),
-    )
+    hash_one((1,), (1,), (message_gpu, np.int32(blocks), np.int32(doubled),
+                          np.int32(stream_word), np.int32(counter_word),
+                          np.uint32(stream), np.uint32(counter), output))
     cp.cuda.runtime.deviceSynchronize()
     actual = digest_from_words(cp.asnumpy(output))
-    expected = powlib.digest(wallet, (stream << 32) | counter, job["prev"], job["anchor"])
+    expected = powlib.digest(wallet, (stream << 32) | counter, challenge)
     if actual != expected:
         raise SystemExit(f"GPU self-test failed: {actual.hex()} != {expected.hex()}")
     print("SELF_TEST_OK", actual.hex(), flush=True)
+
+
+def write_solution(path: Path, solution: dict) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(solution, indent=2) + "\n")
+    temporary.replace(path)
 
 
 def main() -> None:
@@ -110,13 +111,16 @@ def main() -> None:
     parser.add_argument("--wallet", required=True)
     parser.add_argument("--output", default="/opt/hashbroker/solution.json")
     parser.add_argument("--job-file", default="/opt/hashbroker/job.json")
+    parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--blocks", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=256)
     parser.add_argument("--iterations", type=int, default=64)
+    parser.add_argument("--keep-mining", action="store_true",
+                        help="keep searching after a solution instead of exiting")
     args = parser.parse_args()
 
     if PROTOCOL.algorithm not in ("sha256", "sha256d"):
-        raise SystemExit(f"GPU kernel supports SHA-256 only, protocol asks for {PROTOCOL.algorithm}")
+        raise SystemExit(f"GPU kernel is SHA-256 only, protocol asks for {PROTOCOL.algorithm}")
     batch_hashes = args.blocks * args.threads * args.iterations
     if min(args.blocks, args.threads, args.iterations) < 1 or batch_hashes > 2**32:
         raise SystemExit("batch must contain between 1 and 2**32 unique nonces")
@@ -127,8 +131,9 @@ def main() -> None:
     if not wallet.startswith("0x") or len(wallet) != 42:
         raise SystemExit("invalid wallet address")
 
-    properties = cp.cuda.runtime.getDeviceProperties(0)
-    print("GPU", properties["name"].decode(), flush=True)
+    cp.cuda.Device(args.device).use()
+    properties = cp.cuda.runtime.getDeviceProperties(args.device)
+    print(f"GPU {args.device} {properties['name'].decode()}", flush=True)
     module = cp.RawModule(code=CUDA_SOURCE, options=("--std=c++11",))
     hash_one = module.get_function("hash_one")
     mine_batch = module.get_function("mine_batch")
@@ -137,15 +142,15 @@ def main() -> None:
     stream_word, counter_word = powlib.nonce_word_indices()
     job_file = Path(args.job_file)
     job = wait_for_shared_job(job_file, wallet)
-    message, blocks = message_buffer(wallet, job["prev"], job["anchor"])
+    message, blocks = message_buffer(wallet, job["challenge"])
     message_gpu = cp.asarray(message)
-    self_test(hash_one, message_gpu, blocks, doubled, stream_word, counter_word, wallet, job)
+    self_test(hash_one, message_gpu, blocks, doubled, stream_word, counter_word,
+              wallet, job["challenge"])
 
     stream = int.from_bytes(os.urandom(4), "big")
     counter = 0
     total_hashes = 0
     started = time.monotonic()
-    last_anchor_refresh = started
     last_rate_log = started
     rate_hashes = 0
     cache = CandidateCache()
@@ -158,7 +163,6 @@ def main() -> None:
 
     print("MINING", json.dumps({"wallet": wallet, **job}, separators=(",", ":")), flush=True)
     while True:
-        now = time.monotonic()
         try:
             latest, job_error = updates.get_nowait()
         except queue.Empty:
@@ -172,36 +176,27 @@ def main() -> None:
                 if awaiting_feed:
                     print("JOB_FEED_RESUMED", flush=True)
                 awaiting_feed = False
-                if latest["prev"] != job["prev"]:
+                if latest["challenge"] != job["challenge"]:
                     job = latest
-                    message, blocks = message_buffer(wallet, job["prev"], job["anchor"])
+                    message, blocks = message_buffer(wallet, job["challenge"])
                     message_gpu = cp.asarray(message)
-                    last_anchor_refresh = now
-                    print("JOB_UPDATED", json.dumps(job, separators=(",", ":")), flush=True)
+                    stream = int.from_bytes(os.urandom(4), "big")
+                    counter = 0
+                    print("CHALLENGE_CHANGED",
+                          json.dumps(job, separators=(",", ":")), flush=True)
                 else:
-                    for field in ("target", "priceWei", "minted", "blockNumber",
-                                  "fetchedAt", "anchorWindow"):
-                        if field in latest:
-                            job[field] = latest[field]
-                    if now - last_anchor_refresh >= 10:
-                        job["anchorBlock"] = latest["anchorBlock"]
-                        job["anchor"] = latest["anchor"]
-                        message, blocks = message_buffer(wallet, job["prev"], job["anchor"])
-                        message_gpu = cp.asarray(message)
-                        last_anchor_refresh = now
-                        print("ANCHOR_REFRESHED", job["anchorBlock"], flush=True)
+                    job = {**job, **latest}
         if awaiting_feed:
             time.sleep(0.05)
             continue
 
         solution = cache.ready(job)
         if solution is not None:
-            output = Path(args.output)
-            temporary = output.with_suffix(".tmp")
-            temporary.write_text(json.dumps(solution, indent=2) + "\n")
-            temporary.replace(output)
+            write_solution(Path(args.output), solution)
             print("SOLUTION", json.dumps(solution, separators=(",", ":")), flush=True)
-            return
+            if not args.keep_mining:
+                return
+            cache = CandidateCache()
 
         if counter + batch_hashes > 2**32:
             stream = (stream + 1) & 0xFFFFFFFF
@@ -224,7 +219,7 @@ def main() -> None:
 
         if int(found.get()[0]):
             nonce = (stream << 32) | int(found_counter.get()[0])
-            digest = powlib.digest(wallet, nonce, job["prev"], job["anchor"])
+            digest = powlib.digest(wallet, nonce, job["challenge"])
             reported = digest_from_words(cp.asnumpy(found_hash))
             if reported != digest or int.from_bytes(digest, "big") >= candidate_target:
                 raise RuntimeError("GPU candidate failed CPU verification")
@@ -232,22 +227,22 @@ def main() -> None:
                 "wallet": wallet,
                 "nonce": str(nonce),
                 "hash": "0x" + digest.hex(),
-                **job,
+                "challenge": job["challenge"],
+                "difficulty": job["difficulty"],
                 "foundAt": int(time.time()),
             }):
-                print("CANDIDATE_CACHED", json.dumps({
-                    "hash": "0x" + digest.hex(), "anchorBlock": job["anchorBlock"],
-                    "minted": job["minted"], "anchors": len(cache),
+                print("CANDIDATE", json.dumps({
+                    "hash": "0x" + digest.hex(),
+                    "zeroBits": powlib.leading_zero_bits(digest),
+                    "difficulty": job["difficulty"],
                 }, separators=(",", ":")), flush=True)
 
         now = time.monotonic()
         if now - last_rate_log >= 1.0:
             rate = rate_hashes / max(now - last_rate_log, 1e-9)
-            print(
-                f"RATE {rate / 1e6:.2f} MH/s total={total_hashes} "
-                f"runtime={now - started:.1f}s minted={job['minted']}",
-                flush=True,
-            )
+            print(f"RATE {rate / 1e6:.2f} MH/s total={total_hashes} "
+                  f"runtime={now - started:.1f}s difficulty={job['difficulty']} "
+                  f"minted={job['minted']}/{job.get('maxSupply', '?')}", flush=True)
             last_rate_log = now
             rate_hashes = 0
 

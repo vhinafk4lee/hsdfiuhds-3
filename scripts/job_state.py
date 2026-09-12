@@ -8,11 +8,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+import pow as powlib
 from protocol import PROTOCOL
 
 REQUIRED_JOB_FIELDS = (
-    "anchorBlock", "anchor", "priceWei", "prev", "target", "minted",
-    "blockNumber", "fetchedAt",
+    "challenge", "difficulty", "target", "priceWei", "minted", "blockNumber", "fetchedAt",
 )
 
 
@@ -63,27 +63,26 @@ def call_batch(calls: list[str], preferred: int | None = None,
 
 
 def read_job(wallet: str, preferred: int | None = None, failover: bool = True) -> dict:
-    wallet_arg = wallet[2:].lower().rjust(64, "0")
-    calls = [
-        PROTOCOL.view("anchor"),
-        PROTOCOL.view("price"),
-        PROTOCOL.view("prev"),
-        PROTOCOL.view("target") + wallet_arg,
-        PROTOCOL.view("minted"),
-        PROTOCOL.view("window"),
-    ]
-    block_number, values = call_batch(calls, preferred, failover)
-    anchor_raw, price_raw, prev_raw, target_raw, minted_raw, window_raw = values
-    # currentAnchor() returns (blockNumber, blockHash) as two 32-byte words.
-    anchor_hex = anchor_raw[2:].rjust(128, "0")
+    """One snapshot of everything a worker needs, read at a single block."""
+    keys = ("challenge", "difficulty", "price", "minted", "maxSupply", "lastMintBlock")
+    block_number, values = call_batch([PROTOCOL.view(key) for key in keys], preferred, failover)
+    raw = dict(zip(keys, values))
+    challenge = "0x" + raw["challenge"][2:].rjust(64, "0")
+    difficulty = int(raw["difficulty"], 16)
+    minted = int(raw["minted"], 16)
+    max_supply = int(raw["maxSupply"], 16)
+    if not 0 < difficulty <= 255:
+        raise ValueError(f"implausible difficulty {difficulty}")
+    if minted > max_supply:
+        raise ValueError("minted exceeds max supply")
     return {
-        "anchorBlock": int(anchor_hex[:64], 16),
-        "anchor": "0x" + anchor_hex[64:128],
-        "priceWei": int(price_raw, 16),
-        "prev": "0x" + prev_raw[2:].rjust(64, "0"),
-        "target": "0x" + target_raw[2:].rjust(64, "0"),
-        "minted": int(minted_raw, 16),
-        "anchorWindow": int(window_raw, 16),
+        "challenge": challenge,
+        "difficulty": difficulty,
+        "target": "0x%064x" % powlib.target_for_difficulty(difficulty),
+        "priceWei": int(raw["price"], 16),
+        "minted": minted,
+        "maxSupply": max_supply,
+        "lastMintBlock": int(raw["lastMintBlock"], 16),
         "blockNumber": block_number,
         "fetchedAt": time.time(),
     }
@@ -99,7 +98,7 @@ def accept_job(previous: dict | None, incoming: dict) -> bool:
         return False
     if incoming["blockNumber"] == previous["blockNumber"]:
         return all(incoming[key] == previous[key] for key in
-                   ("prev", "minted", "target", "priceWei", "anchor", "anchorBlock"))
+                   ("challenge", "minted", "difficulty", "priceWei"))
     return True
 
 
@@ -128,6 +127,7 @@ def read_shared_job(path: Path, wallet: str, max_age: float = 5.0) -> dict:
     if missing:
         raise ValueError("shared job missing fields: " + ",".join(missing))
     job = {field: payload[field] for field in REQUIRED_JOB_FIELDS}
-    if "anchorWindow" in payload:
-        job["anchorWindow"] = payload["anchorWindow"]
+    for optional in ("maxSupply", "lastMintBlock"):
+        if optional in payload:
+            job[optional] = payload[optional]
     return job

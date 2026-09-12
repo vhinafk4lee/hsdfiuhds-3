@@ -1,33 +1,29 @@
 {
   "name": "hashbroker",
   "chainId": 4663,
-  "contract": "",
+  "contract": "0x4272d6f51771839f596082ef48fa84d35239bab3",
   "algorithm": "sha256",
   "preimage": [
     {"field": "wallet", "size": 20},
     {"field": "nonce", "size": 32},
-    {"field": "prev", "size": 32},
-    {"field": "anchor", "size": 32}
+    {"field": "challenge", "size": 32}
   ],
-  "mine": "mine(uint256,uint256)",
-  "mineArgs": ["nonce", "anchorBlock"],
+  "mine": "mine(uint256,bytes32)",
+  "mineArgs": ["nonce", "challenge"],
   "views": {
-    "anchor": "currentAnchor()",
+    "challenge": "challenge()",
+    "difficulty": "currentDifficulty()",
     "price": "mintPrice()",
-    "prev": "prevWork()",
-    "target": "targetFor(address)",
-    "minted": "totalMinted()",
-    "window": "ANCHOR_WINDOW()"
+    "minted": "totalSupply()",
+    "maxSupply": "MAX_SUPPLY()",
+    "lastMintBlock": "lastMintBlock()"
   },
+  "validate": "isValidProof(address,uint256,bytes32)",
   "rpc": [
     "https://robinhood-rpc.publicnode.com",
     "https://robinhood.rpc.blxrbdn.com",
-    "https://robinhood.api.pocket.network",
     "https://robinhood.drpc.org"
   ],
-  "broadcastRpc": [
-    "https://sequencer.mainnet.chain.robinhood.com",
-    "https://rpc.mainnet.chain.robinhood.com"
-  ],
-  "verified": false
+  "broadcastRpc": [],
+  "verified": true
 }

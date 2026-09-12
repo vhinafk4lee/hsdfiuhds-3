@@ -37,22 +37,23 @@ def search(wallet: str, job_file: Path, results: mp.Queue, stop: mp.Event) -> No
                 time.sleep(0.5)
                 continue
             refreshed = now
-            if job is None or latest["prev"] != job["prev"] or latest["anchor"] != job["anchor"]:
+            if job is None or latest["challenge"] != job["challenge"]:
                 counter = 0
                 stream = int.from_bytes(os.urandom(4), "big")
             job = latest
         target = powlib.search_target(job["target"])
-        prev, anchor = job["prev"], job["anchor"]
+        challenge = job["challenge"]
         for _ in range(CHUNK):
             nonce = (stream << 32) | counter
             counter = (counter + 1) & 0xFFFFFFFF
             if counter == 0:
                 stream = (stream + 1) & 0xFFFFFFFF
-            digest = powlib.digest(wallet, nonce, prev, anchor)
+            digest = powlib.digest(wallet, nonce, challenge)
             if int.from_bytes(digest, "big") < target:
                 results.put(("candidate", {
-                    "wallet": wallet, "nonce": str(nonce), "hash": "0x" + digest.hex(),
-                    **job, "foundAt": int(time.time()),
+                    **job, "wallet": wallet, "nonce": str(nonce),
+                    "hash": "0x" + digest.hex(), "challenge": challenge,
+                    "difficulty": job["difficulty"], "foundAt": int(time.time()),
                 }))
         hashed += CHUNK
         results.put(("rate", hashed))

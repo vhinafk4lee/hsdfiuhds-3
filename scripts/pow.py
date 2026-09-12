@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Reference proof-of-work implementation and GPU message preparation.
 
-The GPU kernel and the CPU verifier must agree bit for bit, so both go through
-this module: ``digest`` is the authoritative CPU implementation, and
-``padded_words``/``nonce_word_indices`` describe the same message to the kernel.
+Hash Broker proofs are
+
+    sha256( miner[20] || nonce[uint256, big endian] || challenge[bytes32] )
+
+and a proof wins when the digest has at least ``currentDifficulty()`` leading
+zero bits. The GPU kernel and the CPU verifier must agree bit for bit, so both
+go through this module.
 """
 from __future__ import annotations
 
@@ -27,9 +31,9 @@ def _bytes_for(field_name: str, values: dict[str, object], size: int) -> bytes:
     return data
 
 
-def preimage(wallet: str, nonce: int, prev: str, anchor: str,
+def preimage(wallet: str, nonce: int, challenge: str,
              protocol: Protocol = PROTOCOL) -> bytes:
-    values = {"wallet": wallet, "nonce": nonce, "prev": prev, "anchor": anchor}
+    values = {"wallet": wallet, "nonce": nonce, "challenge": challenge}
     chunks = []
     for field in protocol.preimage:
         if field.name == "const":
@@ -49,13 +53,13 @@ def hash_bytes(material: bytes, protocol: Protocol = PROTOCOL) -> bytes:
     raise ValueError(f"unsupported algorithm {protocol.algorithm!r}")
 
 
-def digest(wallet: str, nonce: int, prev: str, anchor: str,
+def digest(wallet: str, nonce: int, challenge: str,
            protocol: Protocol = PROTOCOL) -> bytes:
-    return hash_bytes(preimage(wallet, nonce, prev, anchor, protocol), protocol)
+    return hash_bytes(preimage(wallet, nonce, challenge, protocol), protocol)
 
 
 def sha256_pad(material: bytes) -> bytes:
-    """SHA-256 / Keccak-free padding: 0x80, zeros, 64-bit big-endian bit length."""
+    """Merkle-Damgard padding: 0x80, zeros, then a 64-bit big-endian bit length."""
     padded = bytearray(material)
     padded.append(0x80)
     while (len(padded) + 8) % 64:
@@ -64,12 +68,11 @@ def sha256_pad(material: bytes) -> bytes:
     return bytes(padded)
 
 
-def padded_words(wallet: str, prev: str, anchor: str,
-                 protocol: Protocol = PROTOCOL) -> list[int]:
+def padded_words(wallet: str, challenge: str, protocol: Protocol = PROTOCOL) -> list[int]:
     """The padded message with a zero nonce, as big-endian 32-bit words."""
     if protocol.algorithm not in ("sha256", "sha256d"):
         raise ValueError("padded_words only describes SHA-256 messages")
-    block = sha256_pad(preimage(wallet, 0, prev, anchor, protocol))
+    block = sha256_pad(preimage(wallet, 0, challenge, protocol))
     return [int.from_bytes(block[index:index + 4], "big") for index in range(0, len(block), 4)]
 
 
@@ -81,8 +84,20 @@ def nonce_word_indices(protocol: Protocol = PROTOCOL) -> tuple[int, int]:
     return offset // 4, offset // 4 + 1
 
 
+def target_for_difficulty(difficulty: int) -> int:
+    """A proof wins with ``difficulty`` leading zero bits, i.e. hash < 2**(256-d)."""
+    value = int(difficulty)
+    if not 0 <= value <= 255:
+        raise ValueError(f"difficulty {value} out of range")
+    return 1 << (256 - value)
+
+
+def leading_zero_bits(digest_bytes: bytes) -> int:
+    return 256 - int.from_bytes(digest_bytes, "big").bit_length()
+
+
 def search_target(target: str | int, slack: int = 3) -> int:
-    """Mine slightly above the live target so candidates survive small moves."""
+    """Mine slightly above the live target so proofs survive a small difficulty rise."""
     value = int(target, 16) if isinstance(target, str) else int(target)
     return min(MAX_HASH, value << slack)
 

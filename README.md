@@ -1,79 +1,82 @@
 # Hash Broker Miner
 
-Controller/worker miner for the [Hash Broker](https://www.hashbroker.fun/#miner)
-proof-of-work mint on Robinhood Chain, built along the same lines as the
-Hashcats miner: GPU workers search for proofs, a single controller signs and
-broadcasts the mint transaction.
+GPU miner and signer for the [Hash Broker](https://www.hashbroker.fun/#miner)
+proof-of-work mint on Robinhood Chain (chain id 4663), built along the same
+lines as the Hashcats miner: workers search, one controller signs and
+broadcasts.
 
-The one difference that matters: Hash Broker proofs are **SHA-256**, not
-Keccak-256, so the CUDA kernel in `scripts/sha256_cuda.py` implements SHA-256.
+## The proof
 
-## Status
+Recovered from the deployed contract and a mainnet mint, and pinned by
+`tests/test_mainnet_proof.py`:
 
-The search core is complete and tested. The contract-specific constants are
-not: `scripts/protocol.json` still needs the deployed contract address and a
-verified view/mint ABI. Fill those in (or set `HASHBROKER_CONTRACT`) before
-running against the live chain — every module reads them from that one file.
+```
+contract   0x4272D6f51771839F596082eF48fa84D35239Bab3   ("Hash Broker", HBRKR)
+proof      sha256( miner[20] || nonce[uint256 big endian] || challenge[bytes32] )   84 bytes
+wins when  the digest has at least currentDifficulty() leading zero bits
+submit     mine(uint256 nonce, bytes32 challenge)  payable with mintPrice()
+```
 
-| Piece | State |
+There is no anchor block and no per-wallet target: the challenge is global and
+changes on every mint, so a proof is worthless the moment someone else mints.
+The contract exposes `isValidProof(address,uint256,bytes32)`, which the signer
+calls before spending anything.
+
+| view | meaning |
 | --- | --- |
-| SHA-256 CUDA kernel, verified against `hashlib` | done |
-| Preimage layout, padding, nonce placement | done, layout pending confirmation |
-| Job feed, candidate cache, shared job file | done |
-| Signer, fleet control, dashboard | next |
-| Contract address, ABI, mint calldata | **pending** |
+| `challenge()` | the bytes32 every proof is bound to |
+| `currentDifficulty()` | required leading zero bits (50 when this was written) |
+| `mintPrice()` | transaction value for a mint (0.0001 ETH) |
+| `totalSupply()` / `MAX_SUPPLY()` | minted so far / 4444 |
+| `lastMintBlock()` | block of the last accepted proof |
 
 ## Layout
 
 ```
-scripts/protocol.json   contract address, chain, ABI signatures, preimage layout
-scripts/protocol.py     loads that file, derives 4-byte selectors
-scripts/pow.py          reference proof: preimage -> SHA-256 -> target check
+scripts/protocol.json   contract, chain, ABI signatures, preimage layout
+scripts/protocol.py     loads that file, derives selectors, builds mine() calldata
+scripts/pow.py          reference proof: preimage -> SHA-256 -> difficulty check
 scripts/sha256_cuda.py  the CUDA kernel source
-scripts/miner.py        GPU worker (cupy)
+scripts/miner.py        GPU worker (cupy), one process per GPU
 scripts/miner_cpu.py    CPU worker, for validating a deployment end to end
 scripts/job_feed.py     publishes the on-chain job into job.json
-scripts/job_state.py    chain reads and shared-job-file handling
-scripts/candidate_cache.py  keeps the best proof per anchor until it is usable
-tests/                  runs without a GPU
+scripts/job_state.py    chain reads, job file handling
+scripts/candidate_cache.py  keeps the best proof for the live challenge
+scripts/signer.py       verifies, signs, broadcasts, records
+scripts/collect_protocol.py  re-derives the ABI from the chain
+scripts/bootstrap.sh start-all.sh stop-all.sh   host setup and process control
+tests/                  the whole pipeline, without a GPU or a chain
 ```
 
-## Pinning down the ABI
+## Install
 
-`scripts/collect_protocol.py` gathers everything needed to fill in
-`protocol.json`. It runs on any host that can reach a Robinhood Chain RPC and
-needs nothing but the standard library:
+On each GPU host, as root:
 
 ```bash
-python3 scripts/collect_protocol.py \
-    --rpc "$HASHBROKER_RPC" \
-    --tx 0xeeb4cf123542544d4d967f6df3afdb32dfa8f89a7dfba489e38e9f68bccfc75a \
-    --wallet 0xYourWallet \
-    --out hashbroker-report.json
+curl -sO https://raw.githubusercontent.com/vhinafk4lee/hsdfiuhds-3/claude/sweet-rubin-w4jyk9/scripts/bootstrap.sh
+bash bootstrap.sh
 ```
 
-It reads the mint transaction and receipt, pulls the deployed bytecode (through
-an EIP-1967 proxy when there is one), walks the opcodes to recover the
-dispatcher's 4-byte selectors, matches them against a dictionary of plausible
-signatures, calls the read-only ones, and writes a single JSON report.
+It installs the repository under `/opt/hashbroker`, creates a virtualenv, and
+picks the CUDA 11 or 12 build of cupy from the driver version.
 
-Keep the RPC URL itself in `config.env`: an endpoint with an API key in its path
-is a credential and does not belong in this repository.
-
-## Quick start
+## Run
 
 ```bash
-python3 -m pip install -r requirements.txt      # controller and worker
-python3 -m pip install cupy-cuda12x             # worker only
-
-cp scripts/config.example.env config.env        # fill in wallet and contract
+cp scripts/config.example.env config.env     # wallet, key file, cap
 set -a && . ./config.env && set +a
 
-python3 scripts/protocol.py                     # print the resolved protocol
-python3 scripts/job_feed.py --wallet "$HASHBROKER_WALLET" --once
-python3 scripts/job_feed.py --wallet "$HASHBROKER_WALLET" --output /opt/hashbroker/job.json
-python3 scripts/miner.py --wallet "$HASHBROKER_WALLET"
+python3 scripts/signer.py --check            # state, balance, cap: spends nothing
+export HASHBROKER_WALLET
+bash scripts/start-all.sh                    # feed + one worker per GPU
+python3 scripts/signer.py --solutions /opt/hashbroker --dry-run   # sign, never send
+python3 scripts/signer.py --solutions /opt/hashbroker             # live
 ```
+
+Workers write `solution-gpuN.json`; the signer picks them up, re-verifies the
+proof against the live challenge and difficulty, prices the mint, refuses
+anything above `HASHBROKER_SUBMIT_CAP_WEI`, persists the signed transaction,
+then broadcasts. Run the signer on one host only — it owns the account nonce.
 
 ## Tests
 
@@ -81,11 +84,13 @@ python3 scripts/miner.py --wallet "$HASHBROKER_WALLET"
 python3 -m unittest discover -s tests -v
 ```
 
-`tests/test_kernel_sha256.py` compiles the CUDA device functions as plain C and
-compares them against `hashlib`, so the kernel can be verified on a host without
-a GPU.
+51 tests, no GPU and no network needed. They cover the mainnet proof, the CUDA
+device functions (compiled as plain C and compared against `hashlib`), the RPC
+reads against an in-process stub chain, every safety refusal in the signer, and
+the full feed -> worker -> solution -> signed transaction pipeline.
 
 ## Safety
 
-No wallet keys, RPC credentials, or host lists belong in this repository. Keep
-them in `config.env`, `rentals.json`, and a 0600 key file — all git-ignored.
+No wallet keys, RPC credentials with API keys in the URL, or host lists belong
+in this repository. Keep them in `config.env` and a 0600 key file, both
+git-ignored; the signer refuses a key file that is group or world readable.

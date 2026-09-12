@@ -1,49 +1,45 @@
 #!/usr/bin/env python3
-"""Retain unsigned work that may become valid when the target eases."""
+"""Keeps the best proof found for the live challenge.
+
+A proof is bound to (miner, nonce, challenge). It dies the moment anyone mints,
+because the contract moves to a new challenge, so there is nothing to retain
+across challenges. Within one challenge the best proof is worth keeping: the
+difficulty can ease while the challenge stands, and a proof that just missed
+then becomes a winning one without re-mining.
+"""
 from __future__ import annotations
 
-DEFAULT_ANCHOR_WINDOW = 250
-CANDIDATE_FIELDS = ("wallet", "nonce", "hash", "prev", "anchor", "anchorBlock", "foundAt")
+CANDIDATE_FIELDS = ("wallet", "nonce", "hash", "challenge", "difficulty", "foundAt")
 
 
 class CandidateCache:
-    """Best candidate per (prevWork, anchor) pair, pruned to the freshest anchors."""
-
-    def __init__(self, max_anchors: int = 4, submission_margin: int = 20):
-        if max_anchors < 1 or submission_margin < 0:
-            raise ValueError("invalid candidate cache bounds")
-        self.max_anchors = max_anchors
-        self.submission_margin = submission_margin
-        self._candidates: dict[tuple[str, str], dict] = {}
+    def __init__(self) -> None:
+        self._best: dict | None = None
 
     def __len__(self) -> int:
-        return len(self._candidates)
+        return 1 if self._best else 0
+
+    @property
+    def best(self) -> dict | None:
+        return self._best
 
     def remember(self, candidate: dict) -> bool:
-        key = (candidate["prev"], candidate["anchor"])
-        previous = self._candidates.get(key)
-        if previous is not None and int(previous["hash"], 16) <= int(candidate["hash"], 16):
+        """Store the candidate if it is the best seen for its challenge."""
+        current = self._best
+        if current is not None and current["challenge"] == candidate["challenge"] \
+                and int(current["hash"], 16) <= int(candidate["hash"], 16):
             return False
-        self._candidates[key] = {field: candidate[field] for field in CANDIDATE_FIELDS}
-        if len(self._candidates) > self.max_anchors:
-            worst = max(self._candidates, key=lambda item: (
-                int(self._candidates[item]["hash"], 16),
-                -self._candidates[item]["anchorBlock"],
-            ))
-            del self._candidates[worst]
-        return key in self._candidates
+        self._best = {field: candidate[field] for field in CANDIDATE_FIELDS}
+        return True
 
     def ready(self, job: dict) -> dict | None:
-        window = int(job.get("anchorWindow", DEFAULT_ANCHOR_WINDOW))
-        usable_window = max(0, window - self.submission_margin)
-        self._candidates = {
-            key: candidate for key, candidate in self._candidates.items()
-            if candidate["prev"] == job["prev"]
-            and job["blockNumber"] < candidate["anchorBlock"] + usable_window
-        }
-        eligible = [candidate for candidate in self._candidates.values()
-                    if int(candidate["hash"], 16) < int(job["target"], 16)]
-        if not eligible:
+        """Return a submittable solution, dropping work the chain has moved past."""
+        candidate = self._best
+        if candidate is None:
             return None
-        best = min(eligible, key=lambda candidate: int(candidate["hash"], 16))
-        return {**job, **best}
+        if candidate["challenge"] != job["challenge"]:
+            self._best = None
+            return None
+        if int(candidate["hash"], 16) >= int(job["target"], 16):
+            return None
+        return {**job, **candidate}

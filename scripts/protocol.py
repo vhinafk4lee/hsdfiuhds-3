@@ -16,12 +16,22 @@ from pathlib import Path
 from Crypto.Hash import keccak
 
 DEFAULT_PROTOCOL_FILE = Path(__file__).resolve().parent / "protocol.json"
-VARIABLE_FIELDS = ("wallet", "nonce", "prev", "anchor")
+VARIABLE_FIELDS = ("wallet", "nonce", "challenge")
 SUPPORTED_ALGORITHMS = ("sha256", "sha256d", "keccak256")
 
 
 def selector(signature: str) -> str:
     return keccak.new(digest_bits=256, data=signature.encode()).hexdigest()[:8]
+
+
+def checksum(address: str) -> str:
+    """EIP-55 casing. eth-account refuses a transaction whose `to` is not checksummed."""
+    body = address.removeprefix("0x").lower()
+    digest = keccak.new(digest_bits=256, data=body.encode()).hexdigest()
+    return "0x" + "".join(
+        character.upper() if int(digest[index], 16) > 7 else character
+        for index, character in enumerate(body)
+    )
 
 
 @dataclass(frozen=True)
@@ -41,6 +51,7 @@ class Protocol:
     mine_signature: str
     mine_args: tuple[str, ...]
     views: dict[str, str]
+    validate_signature: str
     rpc: tuple[str, ...]
     broadcast_rpc: tuple[str, ...]
     verified: bool
@@ -75,6 +86,22 @@ class Protocol:
     def mine_selector(self) -> str:
         return selector(self.mine_signature)
 
+    @property
+    def validate_selector(self) -> str:
+        if not self.validate_signature:
+            raise KeyError("protocol has no on-chain proof validator")
+        return selector(self.validate_signature)
+
+    def calldata(self, nonce: int, challenge: str) -> str:
+        """ABI-encoded mine() call. Both arguments are single 32-byte words."""
+        words = {"nonce": f"{int(nonce):064x}",
+                 "challenge": str(challenge).removeprefix("0x").rjust(64, "0")}
+        try:
+            body = "".join(words[name] for name in self.mine_args)
+        except KeyError as exc:
+            raise ValueError(f"unsupported mine argument {exc.args[0]!r}") from exc
+        return "0x" + self.mine_selector + body
+
     def require_deployed(self) -> str:
         if not self.contract:
             raise SystemExit(
@@ -108,8 +135,10 @@ def _parse(payload: dict) -> Protocol:
         raise ValueError("preimage layout is empty")
 
     contract = str(os.environ.get("HASHBROKER_CONTRACT") or payload.get("contract", "")).strip()
-    if contract and (not contract.startswith("0x") or len(contract) != 42):
-        raise ValueError("contract must be a 0x-prefixed 20-byte address")
+    if contract:
+        if not contract.startswith("0x") or len(contract) != 42:
+            raise ValueError("contract must be a 0x-prefixed 20-byte address")
+        contract = checksum(contract)
 
     rpc_override = os.environ.get("HASHBROKER_RPC_URLS", "").strip()
     rpc = tuple(url.strip() for url in rpc_override.split(",") if url.strip()) or tuple(
@@ -132,6 +161,7 @@ def _parse(payload: dict) -> Protocol:
         mine_signature=str(payload["mine"]),
         mine_args=mine_args,
         views=dict(payload.get("views", {})),
+        validate_signature=str(payload.get("validate", "")),
         rpc=rpc,
         broadcast_rpc=broadcast,
         verified=bool(payload.get("verified", False)),
@@ -154,9 +184,10 @@ def describe() -> str:
         f"algorithm  {PROTOCOL.algorithm}",
         f"preimage   {fields} = {PROTOCOL.preimage_size} bytes",
         f"mine       {PROTOCOL.mine_signature} -> 0x{PROTOCOL.mine_selector}",
-        f"views      " + ", ".join(
-            f"{key}=0x{selector(signature)}" for key, signature in sorted(PROTOCOL.views.items())
+        "views      " + ", ".join(
+            f"{key}={signature}" for key, signature in sorted(PROTOCOL.views.items())
         ),
+        f"validate   {PROTOCOL.validate_signature or '<none>'}",
         f"verified   {PROTOCOL.verified}",
     ]
     return "\n".join(lines)
