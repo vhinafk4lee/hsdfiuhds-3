@@ -1,0 +1,33 @@
+{
+  "name": "hashbroker",
+  "chainId": 4663,
+  "contract": "",
+  "algorithm": "sha256",
+  "preimage": [
+    {"field": "wallet", "size": 20},
+    {"field": "nonce", "size": 32},
+    {"field": "prev", "size": 32},
+    {"field": "anchor", "size": 32}
+  ],
+  "mine": "mine(uint256,uint256)",
+  "mineArgs": ["nonce", "anchorBlock"],
+  "views": {
+    "anchor": "currentAnchor()",
+    "price": "mintPrice()",
+    "prev": "prevWork()",
+    "target": "targetFor(address)",
+    "minted": "totalMinted()",
+    "window": "ANCHOR_WINDOW()"
+  },
+  "rpc": [
+    "https://robinhood-rpc.publicnode.com",
+    "https://robinhood.rpc.blxrbdn.com",
+    "https://robinhood.api.pocket.network",
+    "https://robinhood.drpc.org"
+  ],
+  "broadcastRpc": [
+    "https://sequencer.mainnet.chain.robinhood.com",
+    "https://rpc.mainnet.chain.robinhood.com"
+  ],
+  "verified": false
+}

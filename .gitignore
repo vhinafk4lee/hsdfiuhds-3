@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+*.pyo
+*.tgz
+*.tar.gz
+
+# Runtime and private configuration
+runtime/
+config.env
+rentals.json
+wallet.key
+*.key
+*.pem
+.env
+.env.*
+events.jsonl
+candidates.json
+job.json
+solution*.json
+
+# Local build and editor files
+.DS_Store
+.idea/
+.vscode/

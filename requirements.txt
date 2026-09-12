@@ -1,0 +1,5 @@
+pycryptodome
+eth-account
+eth-abi
+numpy
+requests
