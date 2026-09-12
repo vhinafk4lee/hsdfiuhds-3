@@ -19,31 +19,10 @@ import numpy as np
 
 import pow as powlib
 from candidate_cache import CandidateCache
+from gpu import (device_name, digest_from_words, load_kernels, message_buffer, self_test,
+                 target_words)
 from job_state import read_shared_job
 from protocol import PROTOCOL
-from sha256_cuda import CUDA_SOURCE
-
-MESSAGE_WORDS = 32
-
-
-def message_buffer(wallet: str, challenge: str) -> tuple[np.ndarray, int]:
-    words = powlib.padded_words(wallet, challenge)
-    if len(words) > MESSAGE_WORDS:
-        raise SystemExit(
-            f"preimage of {PROTOCOL.preimage_size} bytes needs more than two SHA-256 blocks"
-        )
-    blocks = len(words) // 16
-    return np.array(words + [0] * (MESSAGE_WORDS - len(words)), dtype=np.uint32), blocks
-
-
-def target_words(target: int) -> np.ndarray:
-    raw = int(target).to_bytes(32, "big")
-    return np.array([int.from_bytes(raw[index:index + 4], "big") for index in range(0, 32, 4)],
-                    dtype=np.uint32)
-
-
-def digest_from_words(words) -> bytes:
-    return b"".join(int(word).to_bytes(4, "big") for word in words)
 
 
 def watch_jobs(wallet: str, job_file: Path, updates: queue.Queue) -> None:
@@ -84,22 +63,6 @@ def wait_for_shared_job(job_file: Path, wallet: str, timeout: float = 30.0) -> d
     raise SystemExit(f"shared job unavailable: {error}")
 
 
-def self_test(hash_one, message_gpu, blocks: int, doubled: int, stream_word: int,
-              counter_word: int, wallet: str, challenge: str) -> None:
-    """A GPU that disagrees with hashlib is a hardware fault, not a miner."""
-    stream, counter = 0x13579BDF, 0x2468ACE0
-    output = cp.zeros(8, dtype=cp.uint32)
-    hash_one((1,), (1,), (message_gpu, np.int32(blocks), np.int32(doubled),
-                          np.int32(stream_word), np.int32(counter_word),
-                          np.uint32(stream), np.uint32(counter), output))
-    cp.cuda.runtime.deviceSynchronize()
-    actual = digest_from_words(cp.asnumpy(output))
-    expected = powlib.digest(wallet, (stream << 32) | counter, challenge)
-    if actual != expected:
-        raise SystemExit(f"GPU self-test failed: {actual.hex()} != {expected.hex()}")
-    print("SELF_TEST_OK", actual.hex(), flush=True)
-
-
 def write_solution(path: Path, solution: dict) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(solution, indent=2) + "\n")
@@ -131,12 +94,8 @@ def main() -> None:
     if not wallet.startswith("0x") or len(wallet) != 42:
         raise SystemExit("invalid wallet address")
 
-    cp.cuda.Device(args.device).use()
-    properties = cp.cuda.runtime.getDeviceProperties(args.device)
-    print(f"GPU {args.device} {properties['name'].decode()}", flush=True)
-    module = cp.RawModule(code=CUDA_SOURCE, options=("--std=c++11",))
-    hash_one = module.get_function("hash_one")
-    mine_batch = module.get_function("mine_batch")
+    hash_one, mine_batch = load_kernels(args.device)
+    print(f"GPU {args.device} {device_name(args.device)}", flush=True)
 
     doubled = 1 if PROTOCOL.algorithm == "sha256d" else 0
     stream_word, counter_word = powlib.nonce_word_indices()
@@ -144,8 +103,9 @@ def main() -> None:
     job = wait_for_shared_job(job_file, wallet)
     message, blocks = message_buffer(wallet, job["challenge"])
     message_gpu = cp.asarray(message)
-    self_test(hash_one, message_gpu, blocks, doubled, stream_word, counter_word,
-              wallet, job["challenge"])
+    proof = self_test(hash_one, message_gpu, blocks, doubled, stream_word, counter_word,
+                      wallet, job["challenge"])
+    print("SELF_TEST_OK", proof.hex(), flush=True)
 
     stream = int.from_bytes(os.urandom(4), "big")
     counter = 0

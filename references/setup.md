@@ -15,6 +15,31 @@ A worker prints `SELF_TEST_OK` before mining: it hashes a known nonce on the GPU
 and compares against `hashlib`. A GPU that fails it is excluded rather than
 trusted.
 
+## Rented hosts (vast.ai and similar)
+
+The rental is a container reached over SSH on a non-standard port
+(`ssh -p <port> root@<ip>`). Install and measure before committing to a long
+rental:
+
+```bash
+curl -sO https://raw.githubusercontent.com/vhinafk4lee/hsdfiuhds-3/claude/sweet-rubin-w4jyk9/scripts/bootstrap.sh
+bash bootstrap.sh
+/opt/hashbroker/venv/bin/python /opt/hashbroker/repo/scripts/benchmark.py
+```
+
+The benchmark self-tests the kernel, sweeps launch shapes, reports GH/s and the
+expected time per proof. Use its `--blocks/--threads/--iterations` suggestion in
+`start-all.sh` via `HASHBROKER_*` or by editing the worker command.
+
+An RTX 50xx card is Blackwell (sm_120): it needs a cupy build whose NVRTC can
+target it, which `bootstrap.sh` picks from the CUDA version `nvidia-smi`
+reports. Override with `HASHBROKER_CUPY=cupy-cuda12x` if the automatic choice is
+wrong for an image.
+
+Container storage on these hosts is ephemeral. Keep the key file and the
+runtime directory on the controller, never on a rented worker: a worker needs
+no key at all.
+
 ## Controller
 
 Run the signer on exactly one host — it owns the account nonce. It needs:
