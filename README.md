@@ -38,6 +38,28 @@ scripts/candidate_cache.py  keeps the best proof per anchor until it is usable
 tests/                  runs without a GPU
 ```
 
+## Pinning down the ABI
+
+`scripts/collect_protocol.py` gathers everything needed to fill in
+`protocol.json`. It runs on any host that can reach a Robinhood Chain RPC and
+needs nothing but the standard library:
+
+```bash
+python3 scripts/collect_protocol.py \
+    --rpc "$HASHBROKER_RPC" \
+    --tx 0xeeb4cf123542544d4d967f6df3afdb32dfa8f89a7dfba489e38e9f68bccfc75a \
+    --wallet 0xYourWallet \
+    --out hashbroker-report.json
+```
+
+It reads the mint transaction and receipt, pulls the deployed bytecode (through
+an EIP-1967 proxy when there is one), walks the opcodes to recover the
+dispatcher's 4-byte selectors, matches them against a dictionary of plausible
+signatures, calls the read-only ones, and writes a single JSON report.
+
+Keep the RPC URL itself in `config.env`: an endpoint with an API key in its path
+is a credential and does not belong in this repository.
+
 ## Quick start
 
 ```bash
