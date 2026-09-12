@@ -43,10 +43,27 @@ scripts/job_feed.py     publishes the on-chain job into job.json
 scripts/job_state.py    chain reads, job file handling
 scripts/candidate_cache.py  keeps the best proof for the live challenge
 scripts/signer.py       verifies, signs, broadcasts, records
+scripts/run_all.py      supervises feed + workers + signer on one host
+scripts/status.py       read-only terminal view of the local miner
+scripts/benchmark.py    measures a GPU's proof rate, no wallet needed
+scripts/playground.py   the whole miner against a fake chain, for free
+scripts/stub_chain.py   that fake chain
 scripts/collect_protocol.py  re-derives the ABI from the chain
 scripts/bootstrap.sh start-all.sh stop-all.sh   host setup and process control
 tests/                  the whole pipeline, without a GPU or a chain
 ```
+
+## Try it with no chain, no wallet, no GPU
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 scripts/playground.py --difficulty 20 --seconds 60
+```
+
+A stub node serves the contract's views at a difficulty a CPU solves in seconds
+and accepts mints, advancing the challenge like the real contract. The feed,
+worker and signer that run against it are the same processes that run on a rig.
+`references/how-it-works.md` walks through what each of them does.
 
 ## Install
 
@@ -67,11 +84,14 @@ cp scripts/config.example.env config.env     # wallet, key file, cap
 set -a && . ./config.env && set +a
 
 python3 scripts/signer.py --check            # state, balance, cap: spends nothing
-export HASHBROKER_WALLET
-bash scripts/start-all.sh                    # feed + one worker per GPU
-python3 scripts/signer.py --solutions /opt/hashbroker --dry-run   # sign, never send
-python3 scripts/signer.py --solutions /opt/hashbroker             # live
+python3 scripts/run_all.py --wallet "$HASHBROKER_WALLET" --dry-run   # sign, never send
+python3 scripts/run_all.py --wallet "$HASHBROKER_WALLET"             # live
+python3 scripts/status.py                    # in another shell
 ```
+
+`run_all.py` starts the feed, one worker per GPU, and the signer, and restarts
+whatever dies. `start-all.sh` does the mining half only, for hosts where the
+signer runs elsewhere.
 
 Workers write `solution-gpuN.json`; the signer picks them up, re-verifies the
 proof against the live challenge and difficulty, prices the mint, refuses
@@ -84,7 +104,7 @@ then broadcasts. Run the signer on one host only — it owns the account nonce.
 python3 -m unittest discover -s tests -v
 ```
 
-51 tests, no GPU and no network needed. They cover the mainnet proof, the CUDA
+53 tests, no GPU and no network needed. They cover the mainnet proof, the CUDA
 device functions (compiled as plain C and compared against `hashlib`), the RPC
 reads against an in-process stub chain, every safety refusal in the signer, and
 the full feed -> worker -> solution -> signed transaction pipeline.

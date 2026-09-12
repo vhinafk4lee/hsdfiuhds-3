@@ -6,6 +6,7 @@ that cannot be exercised on the developer's machine are the GPU kernel (covered
 by tests/test_kernel_sha256.py) and the live chain; everything between them is
 covered here.
 """
+import dataclasses
 import json
 import os
 import subprocess
@@ -108,6 +109,74 @@ class PipelineTests(unittest.TestCase):
         self.assertIn(ACCOUNT.address, result.stdout)
         self.assertIn("difficulty 14", result.stdout)
         self.assertEqual(self.chain.sent, [])
+
+
+class SupervisorTests(unittest.TestCase):
+    """run_all.py must bring the whole miner up, and take it down again, alone."""
+
+    def setUp(self):
+        self.chain = StubChain(CHALLENGE, difficulty=14)
+        self.server = StubServer(self.chain)
+        self.server.__enter__()
+        self.addCleanup(self.server.__exit__)
+        self.workdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.workdir.cleanup)
+        self.root = Path(self.workdir.name)
+        self.environment = {
+            **os.environ,
+            "HASHBROKER_RPC_URLS": self.server.url,
+            "HASHBROKER_WALLET": ACCOUNT.address,
+            "HASHBROKER_PRIVATE_KEY": KEY,
+            "HASHBROKER_RUNTIME_DIR": str(self.root / "runtime"),
+            "PYTHONPATH": str(SCRIPTS),
+        }
+
+    def test_cpu_mode_mines_and_signs_under_one_command(self):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "run_all.py"), "--wallet", ACCOUNT.address,
+             "--dir", str(self.root), "--mode", "cpu", "--dry-run", "--run-for", "25"],
+            env=self.environment, capture_output=True, text=True, timeout=180,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-2000:])
+        self.assertIn("[feed]", result.stdout)
+        self.assertIn("[cpu]", result.stdout)
+        self.assertIn("[signer]", result.stdout)
+        self.assertIn("SIGNED", result.stdout)
+        self.assertIn("STOPPING", result.stdout)
+        self.assertNotIn("RPC_RETRY", result.stdout, "the feed must not error on a valid job")
+        self.assertNotIn("Traceback", result.stdout)
+        self.assertEqual(self.chain.sent, [], "a dry run must never broadcast")
+
+    def test_status_renders_what_the_feed_published(self):
+        subprocess.run(
+            [sys.executable, str(SCRIPTS / "job_feed.py"), "--wallet", ACCOUNT.address,
+             "--output", str(self.root / "job.json"), "--interval", "0.2", "--once"],
+            env=self.environment, capture_output=True, text=True, timeout=60, check=True,
+        )
+        # --once prints the job instead of writing it, so write one the same way.
+        job_file = self.root / "job.json"
+        if not job_file.exists():
+            sys.path.insert(0, str(SCRIPTS))
+            import importlib
+
+            job_state = importlib.import_module("job_state")
+            protocol = importlib.import_module("protocol")
+            original = job_state.PROTOCOL
+            job_state.PROTOCOL = dataclasses.replace(original, rpc=(self.server.url,))
+            try:
+                job = job_state.read_job(ACCOUNT.address)
+                job_state.write_shared_job(job_file, ACCOUNT.address, job)
+            finally:
+                job_state.PROTOCOL = original
+                del protocol
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "status.py"), "--dir", str(self.root), "--once"],
+            env=self.environment, capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(CHALLENGE, result.stdout)
+        self.assertIn("difficulty 14", result.stdout)
 
 
 if __name__ == "__main__":

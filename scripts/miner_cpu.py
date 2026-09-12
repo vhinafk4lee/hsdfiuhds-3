@@ -66,6 +66,8 @@ def main() -> None:
     parser.add_argument("--output", default="/opt/hashbroker/solution.json")
     parser.add_argument("--job-file", default="/opt/hashbroker/job.json")
     parser.add_argument("--processes", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    parser.add_argument("--keep-mining", action="store_true",
+                        help="keep searching after a solution instead of exiting")
     args = parser.parse_args()
 
     wallet = args.wallet.strip()
@@ -102,7 +104,9 @@ def main() -> None:
                     temporary.write_text(json.dumps(solution, indent=2) + "\n")
                     temporary.replace(output)
                     print("SOLUTION", json.dumps(solution, separators=(",", ":")), flush=True)
-                    return
+                    if not args.keep_mining:
+                        return
+                    cache = CandidateCache()
             now = time.monotonic()
             if now - last_log >= 5.0:
                 print(f"RATE {hashed / (now - last_log) / 1e3:.1f} kH/s", flush=True)

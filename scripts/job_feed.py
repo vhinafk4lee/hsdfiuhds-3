@@ -42,7 +42,7 @@ def main() -> None:
                 continue
             write_shared_job(output, wallet, job)
             last_job = job
-            identity = (str(job["prev"]), int(job["minted"]))
+            identity = (str(job["challenge"]), int(job["minted"]))
             if identity != last_identity:
                 print("JOB_FEED", json.dumps(job, separators=(",", ":")), flush=True)
                 last_identity = identity

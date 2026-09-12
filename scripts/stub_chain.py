@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""A minimal in-process JSON-RPC node that answers like the Hash Broker chain."""
+"""A minimal in-process JSON-RPC node that answers like the Hash Broker chain.
+
+It backs the tests and scripts/playground.py: the whole miner can run against it
+with no chain, no wallet and no money, at whatever difficulty makes a proof
+arrive in seconds instead of days.
+"""
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -17,7 +23,8 @@ def word(value: int) -> str:
 class StubChain:
     def __init__(self, challenge: str, difficulty: int = 8, price: int = 100_000_000_000_000,
                  minted: int = 260, max_supply: int = 4444, balance: int = 10**18,
-                 block_number: int = 0x3A85931, chain_id: int | None = None):
+                 block_number: int = 0x3A85931, chain_id: int | None = None,
+                 advance_on_mint: bool = True):
         self.challenge = challenge
         self.difficulty = difficulty
         self.price = price
@@ -26,10 +33,19 @@ class StubChain:
         self.balance = balance
         self.block_number = block_number
         self.chain_id = PROTOCOL.chain_id if chain_id is None else chain_id
+        self.advance_on_mint = advance_on_mint
         self.account_nonce = 7
         self.sent: list[str] = []
         self.estimate = 107_089
         self.tx_hash = "0x" + "5c" * 32
+
+    def mint(self, raw_transaction: str) -> None:
+        """Accept a mint the way the contract does: new challenge, one more token."""
+        seed = self.challenge.removeprefix("0x") + raw_transaction.removeprefix("0x")
+        self.challenge = "0x" + hashlib.sha256(bytes.fromhex(seed)).hexdigest()
+        self.minted += 1
+        self.block_number += 1
+        self.tx_hash = "0x" + hashlib.sha256(seed.encode()).hexdigest()
 
     def eth_call(self, call: dict) -> str:
         data = call["data"]
@@ -78,6 +94,8 @@ class StubChain:
             return hex(self.estimate)
         if method == "eth_sendRawTransaction":
             self.sent.append(params[0])
+            if self.advance_on_mint:
+                self.mint(params[0])
             return self.tx_hash
         if method == "eth_getTransactionReceipt":
             return {"status": "0x1", "gasUsed": hex(self.estimate),
