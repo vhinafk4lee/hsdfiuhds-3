@@ -49,6 +49,8 @@ scripts/benchmark.py    measures a GPU's proof rate, no wallet needed
 scripts/playground.py   the whole miner against a fake chain, for free
 scripts/stub_chain.py   that fake chain
 scripts/collect_protocol.py  re-derives the ABI from the chain
+scripts/autopilot.sh    bare box -> mining unattended, one command
+scripts/newkey.py       creates a 0600 mining key, prints only the address
 scripts/bootstrap.sh start-all.sh stop-all.sh   host setup and process control
 tests/                  the whole pipeline, without a GPU or a chain
 ```
@@ -64,6 +66,30 @@ A stub node serves the contract's views at a difficulty a CPU solves in seconds
 and accepts mints, advancing the challenge like the real contract. The feed,
 worker and signer that run against it are the same processes that run on a rig.
 `references/how-it-works.md` walks through what each of them does.
+
+## Unattended mining on a rented box
+
+Nobody has to sit and watch it: the workers mine, the signer mints every proof
+that lands, and the supervisor restarts anything that dies.
+
+```bash
+# once, on the machine that will hold the key
+python3 scripts/newkey.py --out /root/wallet.key     # prints the address only
+# fund that address with what the miner may spend
+
+# on the GPU box
+export HASHBROKER_WALLET=0x...
+export HASHBROKER_PRIVATE_KEY_FILE=/root/wallet.key
+export HASHBROKER_SUBMIT_CAP_WEI=2000000000000000     # ceiling per mint
+curl -sfSO https://raw.githubusercontent.com/vhinafk4lee/hsdfiuhds-3/claude/sweet-rubin-w4jyk9/scripts/autopilot.sh
+bash autopilot.sh            # add --dry-run first if you want to watch it sign without sending
+```
+
+`autopilot.sh` installs, benchmarks the card, runs the signer preflight, then
+starts everything in the background and tells you how to watch it. Use a wallet
+created for mining and nothing else: the signer spends from it unattended, and
+`HASHBROKER_SUBMIT_CAP_WEI` is the only thing standing between it and the
+balance.
 
 ## Install
 
@@ -104,7 +130,7 @@ then broadcasts. Run the signer on one host only — it owns the account nonce.
 python3 -m unittest discover -s tests -v
 ```
 
-53 tests, no GPU and no network needed. They cover the mainnet proof, the CUDA
+56 tests, no GPU and no network needed. They cover the mainnet proof, the CUDA
 device functions (compiled as plain C and compared against `hashlib`), the RPC
 reads against an in-process stub chain, every safety refusal in the signer, and
 the full feed -> worker -> solution -> signed transaction pipeline.
