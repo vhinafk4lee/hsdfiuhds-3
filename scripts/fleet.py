@@ -406,6 +406,10 @@ def collect(arguments, rentals: list[Rental], signer: Service | None = None) -> 
                 break
             if signer is not None:
                 signer.supervise(now)
+                if signer.fatal:
+                    print("the signer cannot start, so nothing can be minted: "
+                          "fix its configuration and run again", flush=True)
+                    break
             try:
                 name, solution = sink.get(timeout=0.25)
             except queue.Empty:

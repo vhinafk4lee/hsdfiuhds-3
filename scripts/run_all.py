@@ -24,6 +24,8 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 BACKOFF_START = 1.0
 BACKOFF_CAP = 30.0
+INSTANT_FAILURE_SECONDS = 5.0
+INSTANT_FAILURES_BEFORE_GIVING_UP = 3
 
 
 def count_gpus() -> int:
@@ -49,6 +51,8 @@ class Service:
         self.restart_at = 0.0
         self.started_at = 0.0
         self.restarts = -1
+        self.instant_failures = 0
+        self.fatal = False
 
     def start(self) -> None:
         self.process = subprocess.Popen(
@@ -66,6 +70,8 @@ class Service:
         process.stdout.close()
 
     def supervise(self, now: float) -> None:
+        if self.fatal:
+            return
         if self.process is None:
             if now >= self.restart_at:
                 self.start()
@@ -75,9 +81,21 @@ class Service:
             if now - self.started_at > 60:
                 self.backoff = BACKOFF_START  # it has been healthy for a while
             return
+        self.process = None
+        lifetime = now - self.started_at
+        if code != 0 and lifetime < INSTANT_FAILURE_SECONDS:
+            self.instant_failures += 1
+        else:
+            self.instant_failures = 0
+        if self.instant_failures >= INSTANT_FAILURES_BEFORE_GIVING_UP:
+            # It never got far enough to do any work, so restarting will not help:
+            # this is a configuration error waiting for a person, not a crash.
+            self.fatal = True
+            print(f"[{self.name}] failed immediately {self.instant_failures} times; "
+                  f"giving up — fix the error above and start again", flush=True)
+            return
         delay = BACKOFF_START if code == 0 else self.backoff
         print(f"[{self.name}] exited with {code}, restarting in {delay:.0f}s", flush=True)
-        self.process = None
         self.restart_at = now + delay
         self.backoff = BACKOFF_START if code == 0 else min(self.backoff * 2, BACKOFF_CAP)
 
@@ -170,6 +188,9 @@ def main() -> None:
                 break
             for service in services:
                 service.supervise(now)
+            if all(service.fatal for service in services):
+                print("every service gave up; nothing left to supervise", flush=True)
+                break
             time.sleep(0.25)
     finally:
         print("STOPPING", flush=True)
