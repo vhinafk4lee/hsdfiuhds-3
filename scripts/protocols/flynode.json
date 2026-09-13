@@ -46,7 +46,9 @@
     "retargetQ": "retargetQ()",
     "networkStreak": "networkStreakNow()",
     "addressStreak": "streakOf(address)",
-    "idleSince": "idleSince()"
+    "idleSince": "idleSince()",
+    "neuronsRoot": "neuronsRoot()",
+    "edgesRoot": "edgesRoot()"
   },
   "validate": "workHash(address,uint256,bytes32,bytes32,uint16)",
   "anchorWindow": 250,
@@ -56,5 +58,7 @@
     "https://robinhood.drpc.org"
   ],
   "broadcastRpc": [],
-  "verified": false
+  "verified": false,
+  "neuronsRoot": "0x89c949af2a2e7752f5af8ecc1d4a98d3d72a5d5582332bfb595caf7d8c2a3d2b",
+  "edgesRoot": "0xdd0b52d2dbb96aa8f425e66c9bd83a5af6463f950abcc7541524761774c256cd"
 }
