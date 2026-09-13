@@ -7,6 +7,7 @@ they find back over the same connection, and hands them to the local signer.
 
     python3 scripts/fleet.py keygen                 # make the SSH key, print the public half
     python3 scripts/fleet.py add --target "ssh -p 41095 root@1.2.3.4"   # register a box
+    python3 scripts/fleet.py remove --name box2                         # drop one
     python3 scripts/fleet.py check                  # can we reach every box, how many GPUs
     python3 scripts/fleet.py deploy                 # install the worker everywhere
     python3 scripts/fleet.py start                  # start mining everywhere
@@ -138,19 +139,46 @@ def add(arguments) -> None:
     except FileNotFoundError:
         payload = []
 
+    name = arguments.name or f"box{len(payload) + 1}"
     for item in payload:
         if str(item.get("host")) == host and int(item.get("port", 22)) == port:
             raise SystemExit(f"{host}:{port} is already in {path} as {item.get('name')}")
+        if str(item.get("name")) == name:
+            raise SystemExit(f"{path} already has a host named {name}; pass a different --name")
 
-    entry = {"name": arguments.name or f"box{len(payload) + 1}",
-             "host": host, "port": port, "user": user}
+    entry = {"name": name, "host": host, "port": port, "user": user}
     if arguments.gpus:
         entry["gpus"] = arguments.gpus
     payload.append(entry)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"added {entry['name']}: {user}@{host}:{port}"
+    print(f"added {name}: {user}@{host}:{port}"
           + (f" with {arguments.gpus} GPUs" if arguments.gpus else ""))
     print(f"{path} now has {len(payload)} host(s)")
+
+
+def remove(arguments) -> None:
+    """Drop a box from rentals.json — a returned rental, or a leftover example."""
+    path = Path(arguments.rentals)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise SystemExit(f"{path} must contain a list")
+    wanted_name = arguments.name
+    wanted_host = arguments.host
+    if not wanted_name and not wanted_host:
+        raise SystemExit("pass --name, or --host (with --port to narrow it)")
+
+    kept, dropped = [], []
+    for item in payload:
+        matches_name = wanted_name and str(item.get("name")) == wanted_name
+        matches_host = wanted_host and str(item.get("host")) == wanted_host and (
+            arguments.port is None or int(item.get("port", 22)) == arguments.port)
+        (dropped if (matches_name or matches_host) else kept).append(item)
+    if not dropped:
+        raise SystemExit(f"nothing in {path} matched")
+    path.write_text(json.dumps(kept, indent=2) + "\n", encoding="utf-8")
+    for item in dropped:
+        print(f"removed {item.get('name')}: {item.get('host')}:{item.get('port')}")
+    print(f"{path} now has {len(kept)} host(s)")
 
 
 def ssh_argv(rental: Rental, command: str, ssh: str, key: str | None) -> list[str]:
@@ -405,8 +433,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command",
-                        choices=("keygen", "add", "check", "deploy", "start", "stop", "status",
-                                 "collect", "run"))
+                        choices=("keygen", "add", "remove", "check", "deploy", "start", "stop",
+                                 "status", "collect", "run"))
     parser.add_argument("--rentals", default=os.environ.get("HASHBROKER_RENTALS_FILE",
                                                             "rentals.json"))
     parser.add_argument("--key", default=os.environ.get("HASHBROKER_SSH_KEY",
@@ -420,10 +448,10 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="sign but never broadcast")
     parser.add_argument("--run-for", type=float, default=0.0, help="stop after N seconds")
     parser.add_argument("--target", help="add: the provider's connect string")
-    parser.add_argument("--host", help="add: host address, instead of --target")
+    parser.add_argument("--host", help="add/remove: host address, instead of --target")
     parser.add_argument("--port", type=int, help="add: SSH port")
     parser.add_argument("--user", help="add: SSH user (default root)")
-    parser.add_argument("--name", help="add: a name for this box")
+    parser.add_argument("--name", help="add/remove: the name of this box")
     parser.add_argument("--gpus", type=int, help="add: GPU count (default: ask the box)")
     arguments = parser.parse_args()
 
@@ -432,6 +460,9 @@ def main() -> None:
         return
     if arguments.command == "add":
         add(arguments)
+        return
+    if arguments.command == "remove":
+        remove(arguments)
         return
 
     rentals = load_rentals(Path(arguments.rentals))

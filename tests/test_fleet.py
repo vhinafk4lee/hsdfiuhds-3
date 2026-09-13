@@ -124,6 +124,30 @@ class AddTests(unittest.TestCase):
         self.assertEqual(rentals[0].gpus, 1)
         self.assertEqual(rentals[1].port, 2200)
 
+    def test_refuses_a_duplicate_name(self):
+        self.add("--target", "ssh -p 41095 root@137.175.76.24", "--name", "vast-1")
+        clash = self.add("--target", "ssh -p 45688 root@137.175.76.24", "--name", "vast-1")
+        self.assertNotEqual(clash.returncode, 0)
+        self.assertIn("already has a host named", clash.stdout + clash.stderr)
+
+    def test_remove_drops_a_host_by_name(self):
+        self.add("--target", "ssh -p 41095 root@137.175.76.24", "--name", "vast-1")
+        self.add("--host", "192.0.2.10", "--port", "40123", "--name", "example")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "fleet.py"), "remove", "--rentals", str(self.path),
+             "--name", "example"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        remaining = fleet.load_rentals(self.path)
+        self.assertEqual([rental.name for rental in remaining], ["vast-1"])
+
+    def test_remove_reports_when_nothing_matches(self):
+        self.add("--target", "ssh -p 41095 root@137.175.76.24", "--name", "vast-1")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "fleet.py"), "remove", "--rentals", str(self.path),
+             "--name", "nope"], capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(fleet.load_rentals(self.path)), 1)
+
     def test_refuses_a_duplicate_host(self):
         self.add("--target", "ssh -p 41095 root@137.175.76.24")
         again = self.add("--target", "ssh -p 41095 root@137.175.76.24")
