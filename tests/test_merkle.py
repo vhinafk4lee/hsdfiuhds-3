@@ -106,5 +106,57 @@ class TreeTests(unittest.TestCase):
         self.assertEqual(len(merkle.proof_for(tree, leaves[0])), 6)
 
 
+class ConstructionTests(unittest.TestCase):
+    """The half that is not OpenZeppelin's: dataset order, and promotion."""
+
+    def leaves(self, count: int) -> list[bytes]:
+        return [merkle.neuron_leaf(index, index % 7, index % 5, index % 3)
+                for index in range(count)]
+
+    def test_leaves_are_never_sorted(self):
+        """Sorting the leaves first is the bug this tree exists to not have."""
+        leaves = self.leaves(9)
+        as_given = merkle.build_tree(leaves).root
+        sorted_first = merkle.build_tree(sorted(leaves, reverse=True)).root
+        self.assertNotEqual(as_given, sorted_first)
+        self.assertEqual(as_given, merkle.build_tree(list(leaves)).root)
+
+    def test_an_unpaired_node_rides_up_unchanged(self):
+        """Three leaves: the third has no partner, so level 1 carries it as it is."""
+        leaves = self.leaves(3)
+        tree = merkle.build_tree(leaves)
+        self.assertEqual([len(level) for level in tree.levels], [3, 2, 1])
+        self.assertEqual(tree.levels[1][0], merkle.hash_pair(leaves[0], leaves[1]))
+        self.assertEqual(tree.levels[1][1], leaves[2])
+        self.assertEqual(tree.root, merkle.hash_pair(tree.levels[1][0], leaves[2]))
+
+    def test_a_promoted_leaf_gets_a_shorter_proof(self):
+        """It skips a level instead of folding a sibling that is not there."""
+        tree = merkle.build_tree(self.leaves(5))
+        self.assertEqual([len(level) for level in tree.levels], [5, 3, 2, 1])
+        self.assertEqual(len(tree.proof_at(0)), 3)
+        self.assertEqual(len(tree.proof_at(4)), 1)
+        for index in range(5):
+            self.assertTrue(merkle.verify(tree.proof_at(index), tree.root,
+                                          tree.leaves[index]), index)
+
+    def test_every_size_round_trips(self):
+        for count in range(1, 34):
+            tree = merkle.build_tree(self.leaves(count))
+            for index in range(count):
+                self.assertTrue(
+                    merkle.verify(tree.proof_at(index), tree.root, tree.leaves[index]),
+                    f"{count} leaves, index {index}")
+
+    def test_an_index_outside_the_tree_is_refused(self):
+        tree = merkle.build_tree(self.leaves(4))
+        with self.assertRaises(IndexError):
+            tree.proof_at(4)
+
+    def test_an_empty_tree_is_refused(self):
+        with self.assertRaises(ValueError):
+            merkle.build_tree([])
+
+
 if __name__ == "__main__":
     unittest.main()
