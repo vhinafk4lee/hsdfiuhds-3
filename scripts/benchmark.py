@@ -11,38 +11,29 @@ import argparse
 import time
 
 import cupy as cp
-import numpy as np
 
-import pow as powlib
-from gpu import (device_name, load_kernels, message_buffer, self_test, target_words)
+from gpu import Kernel
 from protocol import PROTOCOL
 
 SAMPLE_WALLET = "0x" + "11" * 20
 SAMPLE_CHALLENGE = "0x" + "3a" * 32
+SAMPLE_BINDINGS = {
+    "keccak256": {"prev": "0x" + "5c" * 32, "anchor": "0x" + "a9" * 32, "typeId": 0},
+}.get(PROTOCOL.algorithm, {"challenge": SAMPLE_CHALLENGE})
 SHAPES = ((4096, 256, 32), (8192, 256, 64), (16384, 256, 64), (8192, 512, 128))
 
 
-def measure(mine_batch, message_gpu, blocks: int, doubled: int, stream_word: int,
-            counter_word: int, shape: tuple[int, int, int], seconds: float) -> float:
+def measure(kernel: Kernel, shape: tuple[int, int, int], seconds: float) -> float:
     grid, threads, iterations = shape
     batch = grid * threads * iterations
     if batch > 2**32:
         raise ValueError("launch shape covers more than 2**32 nonces")
-    found = cp.zeros(1, dtype=cp.int32)
-    found_counter = cp.zeros(1, dtype=cp.uint32)
-    found_hash = cp.zeros(8, dtype=cp.uint32)
-    # An unreachable target keeps every thread hashing for the whole batch.
-    target = cp.asarray(target_words(1))
     counter = 0
     hashed = 0
     started = time.monotonic()
     while time.monotonic() - started < seconds:
-        mine_batch((grid,), (threads,),
-                   (message_gpu, np.int32(blocks), np.int32(doubled),
-                    np.int32(stream_word), np.int32(counter_word),
-                    np.uint32(1), np.uint32(counter), np.uint32(iterations),
-                    target, found, found_counter, found_hash))
-        cp.cuda.runtime.deviceSynchronize()
+        # An unreachable target keeps every thread hashing for the whole batch.
+        kernel.search(grid, threads, 1, counter, iterations, 1)
         hashed += batch
         counter = (counter + batch) % (2**32)
     return hashed / (time.monotonic() - started)
@@ -55,23 +46,17 @@ def main() -> None:
     parser.add_argument("--difficulty", type=int, default=50)
     arguments = parser.parse_args()
 
-    hash_one, mine_batch = load_kernels(arguments.device)
-    print(f"GPU {arguments.device} {device_name(arguments.device)}")
+    kernel = Kernel(arguments.device)
+    print(f"GPU {arguments.device} {kernel.name} algorithm={PROTOCOL.algorithm}")
     print(f"CUDA runtime {cp.cuda.runtime.runtimeGetVersion()} "
           f"driver {cp.cuda.runtime.driverGetVersion()}")
 
-    message, blocks = message_buffer(SAMPLE_WALLET, SAMPLE_CHALLENGE)
-    message_gpu = cp.asarray(message)
-    doubled = 1 if PROTOCOL.algorithm == "sha256d" else 0
-    stream_word, counter_word = powlib.nonce_word_indices()
-    proof = self_test(hash_one, message_gpu, blocks, doubled, stream_word, counter_word,
-                      SAMPLE_WALLET, SAMPLE_CHALLENGE)
-    print("SELF_TEST_OK", proof.hex())
+    kernel.bind(SAMPLE_WALLET, SAMPLE_BINDINGS)
+    print("SELF_TEST_OK", kernel.self_test(SAMPLE_WALLET).hex())
 
     best = (0.0, None)
     for shape in SHAPES:
-        rate = measure(mine_batch, message_gpu, blocks, doubled, stream_word, counter_word,
-                       shape, arguments.seconds)
+        rate = measure(kernel, shape, arguments.seconds)
         grid, threads, iterations = shape
         print(f"blocks={grid:>6} threads={threads:>4} iterations={iterations:>4}"
               f"  {rate / 1e9:7.3f} GH/s")

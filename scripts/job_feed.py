@@ -7,7 +7,7 @@ import json
 import time
 from pathlib import Path
 
-from job_state import accept_job, read_job, write_shared_job
+from job_state import accept_job, job_source, write_shared_job
 from protocol import PROTOCOL
 
 
@@ -26,13 +26,14 @@ def main() -> None:
         raise SystemExit("interval must be at least 0.1 seconds")
 
     output = Path(args.output)
+    source = job_source()
     rpc_index = 0
     last_identity: tuple[str, int] | None = None
     last_job: dict | None = None
     while True:
         began = time.monotonic()
         try:
-            job = read_job(wallet, preferred=rpc_index)
+            job = source.snapshot(wallet, preferred=rpc_index)
             if args.once:
                 print(json.dumps(job, indent=2))
                 return

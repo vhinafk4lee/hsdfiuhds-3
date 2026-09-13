@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GPU worker: searches SHA-256 proofs for the Hash Broker mint.
+"""GPU worker: searches the protocol's proofs on the device.
 
 The worker never signs or broadcasts anything. It reads the job file published
 by the feed and writes an unsigned solution file for the signer to pick up.
@@ -14,13 +14,9 @@ import threading
 import time
 from pathlib import Path
 
-import cupy as cp
-import numpy as np
-
 import pow as powlib
 from candidate_cache import CandidateCache
-from gpu import (device_name, digest_from_words, load_kernels, message_buffer, self_test,
-                 target_words)
+from gpu import Kernel
 from job_state import read_shared_job
 from protocol import PROTOCOL
 
@@ -85,8 +81,6 @@ def main() -> None:
                         help="keep searching after a solution instead of exiting")
     args = parser.parse_args()
 
-    if PROTOCOL.algorithm not in ("sha256", "sha256d"):
-        raise SystemExit(f"GPU kernel is SHA-256 only, protocol asks for {PROTOCOL.algorithm}")
     batch_hashes = args.blocks * args.threads * args.iterations
     if min(args.blocks, args.threads, args.iterations) < 1 or batch_hashes > 2**32:
         raise SystemExit("batch must contain between 1 and 2**32 unique nonces")
@@ -97,18 +91,13 @@ def main() -> None:
     if not wallet.startswith("0x") or len(wallet) != 42:
         raise SystemExit("invalid wallet address")
 
-    hash_one, mine_batch = load_kernels(args.device)
-    print(f"GPU {args.device} {device_name(args.device)}", flush=True)
+    kernel = Kernel(args.device)
+    print(f"GPU {args.device} {kernel.name} algorithm={PROTOCOL.algorithm}", flush=True)
 
-    doubled = 1 if PROTOCOL.algorithm == "sha256d" else 0
-    stream_word, counter_word = powlib.nonce_word_indices()
     job_file = Path(args.job_file)
     job = wait_for_shared_job(job_file, wallet)
-    message, blocks = message_buffer(wallet, job["challenge"])
-    message_gpu = cp.asarray(message)
-    proof = self_test(hash_one, message_gpu, blocks, doubled, stream_word, counter_word,
-                      wallet, job["challenge"])
-    print("SELF_TEST_OK", proof.hex(), flush=True)
+    kernel.bind(wallet, job["bindings"])
+    print("SELF_TEST_OK", kernel.self_test(wallet).hex(), flush=True)
 
     stream = int.from_bytes(os.urandom(4), "big")
     counter = 0
@@ -118,9 +107,6 @@ def main() -> None:
     rate_hashes = 0
     cache = CandidateCache()
     awaiting_feed = False
-    found = cp.zeros(1, dtype=cp.int32)
-    found_counter = cp.zeros(1, dtype=cp.uint32)
-    found_hash = cp.zeros(8, dtype=cp.uint32)
     updates: queue.Queue = queue.Queue(maxsize=1)
     threading.Thread(target=watch_jobs, args=(wallet, job_file, updates), daemon=True).start()
 
@@ -141,11 +127,10 @@ def main() -> None:
                 awaiting_feed = False
                 if latest["challenge"] != job["challenge"]:
                     job = latest
-                    message, blocks = message_buffer(wallet, job["challenge"])
-                    message_gpu = cp.asarray(message)
+                    kernel.bind(wallet, job["bindings"])
                     stream = int.from_bytes(os.urandom(4), "big")
                     counter = 0
-                    print("CHALLENGE_CHANGED",
+                    print("JOB_CHANGED",
                           json.dumps(job, separators=(",", ":")), flush=True)
                 else:
                     job = {**job, **latest}
@@ -166,24 +151,16 @@ def main() -> None:
             counter = 0
 
         candidate_target = powlib.search_target(job["target"])
-        found.fill(0)
-        mine_batch(
-            (args.blocks,), (args.threads,),
-            (message_gpu, np.int32(blocks), np.int32(doubled),
-             np.int32(stream_word), np.int32(counter_word),
-             np.uint32(stream), np.uint32(counter), np.uint32(args.iterations),
-             cp.asarray(target_words(candidate_target)),
-             found, found_counter, found_hash),
-        )
-        cp.cuda.runtime.deviceSynchronize()
+        hit = kernel.search(args.blocks, args.threads, stream, counter,
+                            args.iterations, candidate_target)
         total_hashes += batch_hashes
         rate_hashes += batch_hashes
         counter += batch_hashes
 
-        if int(found.get()[0]):
-            nonce = (stream << 32) | int(found_counter.get()[0])
-            digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": job["challenge"]})
-            reported = digest_from_words(cp.asnumpy(found_hash))
+        if hit is not None:
+            found_counter, reported = hit
+            nonce = (stream << 32) | found_counter
+            digest = powlib.digest({"wallet": wallet, "nonce": nonce, **job["bindings"]})
             if reported != digest or int.from_bytes(digest, "big") >= candidate_target:
                 raise RuntimeError("GPU candidate failed CPU verification")
             if cache.remember({

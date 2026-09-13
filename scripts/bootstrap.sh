@@ -3,7 +3,7 @@
 set -euo pipefail
 
 TARGET="${HASHBROKER_WORKER_DIR:-/opt/hashbroker}"
-BRANCH="${HASHBROKER_BRANCH:-claude/sweet-rubin-w4jyk9}"
+BRANCH="${HASHBROKER_BRANCH:-claude/focused-goldberg-bdhxin}"
 REPO="${HASHBROKER_REPO:-https://github.com/vhinafk4lee/hsdfiuhds-3.git}"
 
 if ! command -v nvidia-smi >/dev/null; then

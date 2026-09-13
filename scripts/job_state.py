@@ -9,10 +9,18 @@ import urllib.request
 from pathlib import Path
 
 import pow as powlib
-from protocol import PROTOCOL
+from protocol import PROTOCOL, Protocol
 
 REQUIRED_JOB_FIELDS = (
     "challenge", "difficulty", "target", "priceWei", "minted", "blockNumber", "fetchedAt",
+    "bindings",
+)
+# What a mint needs on top of the proof, and only some protocols have them.
+OPTIONAL_JOB_FIELDS = (
+    "maxSupply", "lastMintBlock", "anchorBlock", "cell", "parent", "leaf", "typeId",
+    "region", "typeName", "neuronProof", "edgeProof", "rarityBits", "occupied",
+    "retargetQ", "networkStreak", "addressStreak", "idleSince", "predictedBits",
+    "failsafeBits", "prev", "anchor",
 )
 
 
@@ -77,6 +85,7 @@ def read_job(wallet: str, preferred: int | None = None, failover: bool = True) -
         raise ValueError("minted exceeds max supply")
     return {
         "challenge": challenge,
+        "bindings": {"challenge": challenge},
         "difficulty": difficulty,
         "target": "0x%064x" % powlib.target_for_difficulty(difficulty),
         "priceWei": int(raw["price"], 16),
@@ -127,7 +136,24 @@ def read_shared_job(path: Path, wallet: str, max_age: float = 5.0) -> dict:
     if missing:
         raise ValueError("shared job missing fields: " + ",".join(missing))
     job = {field: payload[field] for field in REQUIRED_JOB_FIELDS}
-    for optional in ("maxSupply", "lastMintBlock"):
+    if not isinstance(job["bindings"], dict) or not job["bindings"]:
+        raise ValueError("shared job has no preimage bindings")
+    for optional in OPTIONAL_JOB_FIELDS:
         if optional in payload:
             job[optional] = payload[optional]
     return job
+
+
+class ChainJobSource:
+    """The plain case: one read of the contract is the whole job."""
+
+    def snapshot(self, wallet: str, preferred: int | None = None) -> dict:
+        return read_job(wallet, preferred=preferred)
+
+
+def job_source(protocol: Protocol = PROTOCOL):
+    """FlyNode has to choose a cell before it can describe a job; nothing else does."""
+    if protocol.name == "flynode":
+        from flynode import FlyNodeSource
+        return FlyNodeSource(protocol=protocol)
+    return ChainJobSource()

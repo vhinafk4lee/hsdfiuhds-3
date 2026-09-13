@@ -39,7 +39,7 @@ sys.path.insert(0, str(SCRIPTS))
 from run_all import Service  # noqa: E402
 
 DEFAULT_REMOTE_DIR = "/opt/hashbroker"
-DEFAULT_BRANCH = os.environ.get("HASHBROKER_BRANCH", "claude/sweet-rubin-w4jyk9")
+DEFAULT_BRANCH = os.environ.get("HASHBROKER_BRANCH", "claude/focused-goldberg-bdhxin")
 RAW_BASE = (f"https://raw.githubusercontent.com/vhinafk4lee/hsdfiuhds-3/{DEFAULT_BRANCH}/scripts")
 SSH_OPTIONS = (
     "-o", "BatchMode=yes",
@@ -287,10 +287,13 @@ def start(arguments, rentals: list[Rental]) -> None:
             shape += f"export HASHBROKER_{name}={int(value)}; "
     if arguments.protocol:
         shape += f"export HASHBROKER_PROTOCOL={shlex.quote(arguments.protocol)}; "
-    for rental in rentals:
+    for rank, rental in enumerate(rentals):
         gpu_option = f"export HASHBROKER_GPUS={rental.gpus}; " if rental.gpus else ""
+        # One rank per box, so two of them never grind away at the same cell.
+        rank_option = f"export HASHBROKER_CELL_RANK={rank}; "
         command = (
-            f"cd {arguments.dir}; export HASHBROKER_WALLET={wallet}; {gpu_option}{shape}"
+            f"cd {arguments.dir}; export HASHBROKER_WALLET={wallet}; "
+            f"{gpu_option}{rank_option}{shape}"
             f"curl -sfSO {RAW_BASE}/autopilot.sh && bash autopilot.sh --no-signer --skip-benchmark"
         )
         result = run_ssh(rental, command, arguments.ssh, arguments.key, timeout=1800)

@@ -43,12 +43,13 @@ def search(wallet: str, job_file: Path, results: mp.Queue, stop: mp.Event) -> No
             job = latest
         target = powlib.search_target(job["target"])
         challenge = job["challenge"]
+        bindings = {"wallet": wallet, **job["bindings"]}
         for _ in range(CHUNK):
             nonce = (stream << 32) | counter
             counter = (counter + 1) & 0xFFFFFFFF
             if counter == 0:
                 stream = (stream + 1) & 0xFFFFFFFF
-            digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": challenge})
+            digest = powlib.digest({**bindings, "nonce": nonce})
             if int.from_bytes(digest, "big") < target:
                 results.put(("candidate", {
                     **job, "wallet": wallet, "nonce": str(nonce),

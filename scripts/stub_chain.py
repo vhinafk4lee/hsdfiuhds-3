@@ -147,3 +147,147 @@ class StubServer:
     def __exit__(self, *_exc) -> None:
         self._server.shutdown()
         self._server.server_close()
+
+
+class FlyNodeChain:
+    """A stub that answers like FlyNode: two Merkle roots, a lattice, and logs.
+
+    It grows a real graph. Seed it with one claimed cell and it will only accept
+    a mint whose parent is already claimed and whose cell is not, which is what
+    makes it worth testing the frontier against.
+    """
+
+    MINED = "Mined(address,uint32,uint32,uint256)"
+
+    def __init__(self, lattice, protocol, occupied: list[int] | None = None,
+                 price: int = 2 * 10**14, retarget_q: int = 8, network_streak: int = 3,
+                 address_streak: int = 1, failsafe: int = 0, idle_since: int = 0,
+                 deploy_block: int = 62107948, blocks_since_deploy: int = 5000,
+                 balance: int = 10**18, miner: str = "0x" + "11" * 20,
+                 anchor_at: int | None = None, roots: tuple[str, str] | None = None):
+        from keccak_pure import keccak256
+        self.lattice = lattice
+        self.protocol = protocol
+        self.roots = roots or ("0x" + lattice.neurons_root.hex(),
+                               "0x" + lattice.edges_root.hex())
+        self.price = price
+        self.retarget_q = retarget_q
+        self.network_streak = network_streak
+        self.address_streak = address_streak
+        self.failsafe = failsafe
+        self.idle_since = idle_since
+        self.deploy_block = deploy_block
+        self.block_number = deploy_block + blocks_since_deploy
+        self.balance = balance
+        self.account_nonce = 3
+        self.estimate = 240_000
+        self.sent: list[str] = []
+        self.tx_hash = "0x" + "7e" * 32
+        self.prev = "0x" + "5c" * 32
+        # An anchor that is some block's hash, when a test wants one to be found.
+        self.anchor_at = anchor_at
+        self.anchor = (self.block_hash(anchor_at) if anchor_at is not None
+                       else "0x" + "a9" * 32)
+        self.topic = "0x" + keccak256(self.MINED.encode()).hex()
+        self.logs: list[dict] = []
+        for index, cell in enumerate(occupied or []):
+            parent = next((other for other in lattice.linked(cell)
+                           if other in (occupied or [])[:index]), cell)
+            self.record(cell, parent, miner, deploy_block + index)
+
+    # --- state ---------------------------------------------------------------
+
+    @staticmethod
+    def block_hash(number: int) -> str:
+        return "0x" + hashlib.sha256(f"block-{number}".encode()).hexdigest()
+
+    @property
+    def occupied(self) -> set[int]:
+        return {int(log["topics"][2], 16) for log in self.logs}
+
+    def record(self, cell: int, parent: int, miner: str, block: int) -> None:
+        self.logs.append({
+            "address": self.protocol.contract,
+            "topics": [self.topic,
+                       "0x" + miner.removeprefix("0x").rjust(64, "0"),
+                       "0x" + word(cell)],
+            # parent and the block it landed in: one is a cell, one only looks
+            # like one, which is the whole point of the slot search.
+            "data": "0x" + word(parent) + word(block),
+            "blockNumber": hex(block),
+        })
+
+    def required_bits(self, rarity: int) -> int:
+        value = (16 + self.retarget_q // 4 + rarity
+                 + min(16, self.network_streak) + min(16, self.address_streak)
+                 - self.failsafe)
+        return max(1, value)
+
+    # --- rpc -----------------------------------------------------------------
+
+    def eth_call(self, call: dict) -> str:
+        data = call["data"]
+        selector = data[:10]
+        views = {key: self.protocol.view(key) for key in self.protocol.views}
+        simple = {
+            "prev": self.prev, "anchor": self.anchor,
+            "price": "0x" + word(self.price),
+            "minted": "0x" + word(len(self.occupied)),
+            "maxSupply": "0x" + word(self.lattice.size),
+            "lastMintBlock": "0x" + word(self.block_number - 3),
+            "retargetQ": "0x" + word(self.retarget_q),
+            "networkStreak": "0x" + word(self.network_streak),
+            "idleSince": "0x" + word(self.idle_since),
+            "neuronsRoot": self.roots[0],
+            "edgesRoot": self.roots[1],
+        }
+        for key, answer in simple.items():
+            if key in views and selector == views[key]:
+                return answer
+        if selector == views["addressStreak"]:
+            return "0x" + word(self.address_streak)
+        if selector == views["requiredBits"]:
+            return "0x" + word(self.required_bits(int(data[10:74], 16)))
+        if selector == views["mined"]:
+            return "0x" + word(1 if int(data[10:74], 16) in self.occupied else 0)
+        raise ValueError(f"stub has no answer for {selector}")
+
+    def eth_getLogs(self, query: dict) -> list[dict]:
+        low = int(query.get("fromBlock", "0x0"), 16)
+        high = int(query.get("toBlock", hex(self.block_number)), 16)
+        wanted = (query.get("topics") or [None])[0]
+        return [log for log in self.logs
+                if low <= int(log["blockNumber"], 16) <= high
+                and (wanted is None or log["topics"][0] == wanted)]
+
+    def handle(self, method: str, params: list):
+        if method == "eth_chainId":
+            return hex(self.protocol.chain_id)
+        if method == "eth_blockNumber":
+            return hex(self.block_number)
+        if method == "eth_call":
+            return self.eth_call(params[0])
+        if method == "eth_getLogs":
+            return self.eth_getLogs(params[0])
+        if method == "eth_getBlockByNumber":
+            number = int(params[0], 16)
+            if number > self.block_number:
+                return None
+            return {"number": hex(number), "hash": self.block_hash(number)}
+        if method == "eth_getTransactionCount":
+            return hex(self.account_nonce)
+        if method == "eth_getBalance":
+            return hex(self.balance)
+        if method == "eth_maxPriorityFeePerGas":
+            return hex(10**9)
+        if method == "eth_gasPrice":
+            return hex(10**8)
+        if method == "eth_estimateGas":
+            return hex(self.estimate)
+        if method == "eth_sendRawTransaction":
+            self.sent.append(params[0])
+            return self.tx_hash
+        if method == "eth_getTransactionReceipt":
+            return {"status": "0x1", "gasUsed": hex(self.estimate),
+                    "transactionHash": self.tx_hash}
+        raise ValueError(f"stub has no answer for {method}")

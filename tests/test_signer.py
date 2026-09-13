@@ -116,8 +116,10 @@ class VerifyTests(SignerTestCase):
 
     def test_asks_the_contract_to_confirm(self):
         nonce = int(self.solution["nonce"])
-        self.assertTrue(signer.confirm_on_chain(ACCOUNT.address, nonce, CHALLENGE))
-        self.assertFalse(signer.confirm_on_chain(ACCOUNT.address, nonce + 1, CHALLENGE))
+        bindings = {"challenge": CHALLENGE}
+        digest = powlib.digest({"wallet": ACCOUNT.address, "nonce": nonce, **bindings})
+        self.assertTrue(signer.confirm_on_chain(ACCOUNT.address, nonce, bindings, digest))
+        self.assertFalse(signer.confirm_on_chain(ACCOUNT.address, nonce + 1, bindings, digest))
 
 
 class TransactionTests(SignerTestCase):
@@ -127,7 +129,8 @@ class TransactionTests(SignerTestCase):
     def test_builds_the_expected_call(self):
         state = self.state()
         nonce = int(self.solution["nonce"])
-        transaction = signer.build_transaction(ACCOUNT.address, nonce, CHALLENGE, state, 107_089)
+        transaction = signer.build_transaction(
+            ACCOUNT.address, PROTOCOL.calldata(nonce, CHALLENGE), state, 107_089)
         self.assertEqual(transaction["to"], PROTOCOL.contract)
         self.assertEqual(transaction["chainId"], PROTOCOL.chain_id)
         self.assertEqual(transaction["value"], self.chain.price)
@@ -139,18 +142,21 @@ class TransactionTests(SignerTestCase):
         state = self.state()
         with mock.patch.object(signer, "SUBMIT_CAP_WEI", 1):
             with self.assertRaisesRegex(ValueError, "cap is"):
-                signer.build_transaction(ACCOUNT.address, 1, CHALLENGE, state, 107_089)
+                signer.build_transaction(
+                    ACCOUNT.address, PROTOCOL.calldata(1, CHALLENGE), state, 107_089)
 
     def test_refuses_an_oversized_gas_estimate(self):
         state = self.state()
         with self.assertRaisesRegex(ValueError, "safety limit"):
-            signer.build_transaction(ACCOUNT.address, 1, CHALLENGE, state, 10_000_000)
+            signer.build_transaction(
+                ACCOUNT.address, PROTOCOL.calldata(1, CHALLENGE), state, 10_000_000)
 
     def test_refuses_when_the_balance_cannot_cover_the_ceiling(self):
         state = self.state()
         state["balanceWei"] = 1
         with self.assertRaisesRegex(ValueError, "below"):
-            signer.build_transaction(ACCOUNT.address, 1, CHALLENGE, state, 107_089)
+            signer.build_transaction(
+                ACCOUNT.address, PROTOCOL.calldata(1, CHALLENGE), state, 107_089)
 
 
 class SubmitTests(SignerTestCase):

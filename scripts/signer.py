@@ -23,6 +23,8 @@ from job_state import call_batch, request_batch
 from keyfile import assert_private
 from protocol import PROTOCOL
 
+IS_FLYNODE = PROTOCOL.name == "flynode"
+
 WALLET = os.environ.get("HASHBROKER_WALLET", "").strip()
 RUNTIME_DIR = Path(os.environ.get("HASHBROKER_RUNTIME_DIR", "./runtime"))
 SUBMIT_CAP_WEI = int(os.environ.get("HASHBROKER_SUBMIT_CAP_WEI", "100000000000000000"))
@@ -56,8 +58,53 @@ def load_account() -> Account:
     return account
 
 
-def read_state(wallet: str) -> dict:
+def account_state(wallet: str, state: dict) -> dict:
+    """Nonce, balance and fees: the same four reads whatever is being minted."""
+    nonce, balance, priority, gas_price = request_batch(PROTOCOL.rpc[0], [
+        ("eth_getTransactionCount", [wallet, "pending"]),
+        ("eth_getBalance", [wallet, "latest"]),
+        ("eth_maxPriorityFeePerGas", []),
+        ("eth_gasPrice", []),
+    ])
+    state["nonce"] = int(nonce, 16)
+    state["balanceWei"] = int(balance, 16)
+    state["priorityFeeWei"] = int(priority, 16)
+    state["gasPriceWei"] = int(gas_price, 16)
+    return state
+
+
+def read_flynode_state(wallet: str, rarity: int) -> dict:
+    """FlyNode prices a mint per cell: requiredBits depends on how rare it is."""
+    import flynode
+
+    keys = ("prev", "anchor", "price", "minted", "maxSupply")
+    block_number, values = call_batch([flynode.view_data(PROTOCOL, key) for key in keys])
+    raw = dict(zip(keys, values))
+    extra = request_batch(PROTOCOL.rpc[0], [
+        ("eth_call", [{"to": PROTOCOL.require_deployed(),
+                       "data": flynode.view_data(PROTOCOL, "requiredBits", rarity, wallet)},
+                      hex(block_number)]),
+    ])
+    difficulty = int(extra[0], 16)
+    if not 0 < difficulty <= 255:
+        raise ValueError(f"implausible requiredBits {difficulty}")
+    return account_state(wallet, {
+        "prev": "0x" + raw["prev"][2:].rjust(64, "0"),
+        "anchor": "0x" + raw["anchor"][2:].rjust(64, "0"),
+        "difficulty": difficulty,
+        "target": powlib.target_for_difficulty(difficulty),
+        "priceWei": int(raw["price"], 16),
+        "minted": int(raw["minted"], 16),
+        "maxSupply": int(raw["maxSupply"], 16),
+        "blockNumber": block_number,
+    })
+
+
+def read_state(wallet: str, solution: dict | None = None) -> dict:
     """Chain state needed to price and place the transaction, from one endpoint."""
+    if IS_FLYNODE:
+        rarity = int((solution or {}).get("rarityBits", 0))
+        return read_flynode_state(wallet, rarity)
     keys = ("challenge", "difficulty", "price", "minted", "maxSupply")
     block_number, values = call_batch([PROTOCOL.view(key) for key in keys])
     raw = dict(zip(keys, values))
@@ -71,18 +118,20 @@ def read_state(wallet: str) -> dict:
         "maxSupply": int(raw["maxSupply"], 16),
         "blockNumber": block_number,
     }
-    account_rows = request_batch(PROTOCOL.rpc[0], [
-        ("eth_getTransactionCount", [wallet, "pending"]),
-        ("eth_getBalance", [wallet, "latest"]),
-        ("eth_maxPriorityFeePerGas", []),
-        ("eth_gasPrice", []),
-    ])
-    nonce, balance, priority, gas_price = account_rows
-    state["nonce"] = int(nonce, 16)
-    state["balanceWei"] = int(balance, 16)
-    state["priorityFeeWei"] = int(priority, 16)
-    state["gasPriceWei"] = int(gas_price, 16)
-    return state
+    return account_state(wallet, state)
+
+
+def bindings_of(solution: dict, state: dict) -> dict:
+    """The preimage fields, taken from the chain rather than from the solution.
+
+    A worker can send anything; what it cannot do is make the contract agree.
+    Rebuilding the preimage from the live reads means a proof mined against a
+    stale prev or anchor fails here rather than on-chain at our expense.
+    """
+    if not IS_FLYNODE:
+        return {"challenge": state["challenge"]}
+    return {"prev": state["prev"], "anchor": state["anchor"],
+            "typeId": int(solution["typeId"])}
 
 
 def verify_solution(solution: dict, wallet: str, state: dict) -> int:
@@ -92,10 +141,21 @@ def verify_solution(solution: dict, wallet: str, state: dict) -> int:
     nonce = int(str(solution["nonce"]))
     if not 0 <= nonce < 2**256:
         raise ValueError("nonce out of range")
-    challenge = str(solution["challenge"]).lower()
-    if challenge != state["challenge"].lower():
-        raise ValueError("solution is for a challenge the chain has moved past")
-    digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": challenge})
+    bindings = bindings_of(solution, state)
+    if IS_FLYNODE:
+        import flynode
+        expected = flynode.job_identity(bindings, int(solution["cell"]))
+        if str(solution["challenge"]).lower() != expected.lower():
+            raise ValueError("solution is for a cell or an anchor the chain has moved past")
+        if int(solution["leaf"][0]) != int(solution["cell"]):
+            raise ValueError("solution leaf is not the cell it claims")
+        if int(solution["leaf"][1]) != int(solution["typeId"]):
+            raise ValueError("solution leaf disagrees with its own type")
+    else:
+        challenge = str(solution["challenge"]).lower()
+        if challenge != state["challenge"].lower():
+            raise ValueError("solution is for a challenge the chain has moved past")
+    digest = powlib.digest({"wallet": wallet, "nonce": nonce, **bindings})
     if "0x" + digest.hex() != str(solution.get("hash", "")).lower():
         raise ValueError("solution hash does not match its own nonce")
     if int.from_bytes(digest, "big") >= state["target"]:
@@ -106,22 +166,47 @@ def verify_solution(solution: dict, wallet: str, state: dict) -> int:
     return nonce
 
 
-def confirm_on_chain(wallet: str, nonce: int, challenge: str) -> bool | None:
-    """Ask the contract itself, when it exposes a validator. None means unknown."""
+def confirm_on_chain(wallet: str, nonce: int, bindings: dict, digest: bytes) -> bool | None:
+    """Ask the contract itself, when it exposes a validator. None means unknown.
+
+    Hash Broker answers yes or no. FlyNode's workHash() hands back the hash it
+    would compute, which is stronger: if it matches ours then every byte of the
+    preimage, its order and its padding are the contract's, not our reading of
+    them.
+    """
     if not PROTOCOL.validate_signature:
         return None
-    data = ("0x" + PROTOCOL.validate_selector
-            + wallet[2:].lower().rjust(64, "0")
-            + f"{nonce:064x}"
-            + challenge.removeprefix("0x").rjust(64, "0"))
+    body = wallet[2:].lower().rjust(64, "0") + f"{nonce:064x}"
+    if IS_FLYNODE:
+        body += (str(bindings["prev"]).removeprefix("0x").rjust(64, "0")
+                 + str(bindings["anchor"]).removeprefix("0x").rjust(64, "0")
+                 + f"{int(bindings['typeId']):064x}")
+    else:
+        body += str(bindings["challenge"]).removeprefix("0x").rjust(64, "0")
     try:
         result = request_batch(PROTOCOL.rpc[0], [
-            ("eth_call", [{"to": PROTOCOL.require_deployed(), "data": data}, "latest"])
+            ("eth_call", [{"to": PROTOCOL.require_deployed(),
+                           "data": "0x" + PROTOCOL.validate_selector + body}, "latest"])
         ])[0]
     except Exception as exc:
         log_event("VALIDATOR_UNAVAILABLE", error=f"{type(exc).__name__}: {exc}")
         return None
+    if IS_FLYNODE:
+        return bytes.fromhex(str(result).removeprefix("0x").rjust(64, "0")) == digest
     return int(result, 16) == 1
+
+
+def calldata_for(solution: dict, nonce: int, state: dict) -> str:
+    """The mint call. FlyNode carries the cell and both proofs; Hash Broker does not."""
+    if not IS_FLYNODE:
+        return PROTOCOL.calldata(nonce, state["challenge"])
+    import flynode
+    proofs = []
+    for key in ("neuronProof", "edgeProof"):
+        proofs.append([bytes.fromhex(str(step).removeprefix("0x")) for step in solution[key]])
+    return flynode.encode_mine(
+        nonce, int(solution["anchorBlock"]), tuple(int(part) for part in solution["leaf"]),
+        proofs[0], int(solution["parent"]), proofs[1], PROTOCOL)
 
 
 def estimate_gas(wallet: str, calldata: str, value: int) -> int:
@@ -131,7 +216,7 @@ def estimate_gas(wallet: str, calldata: str, value: int) -> int:
     return int(result, 16)
 
 
-def build_transaction(wallet: str, nonce: int, challenge: str, state: dict,
+def build_transaction(wallet: str, calldata: str, state: dict,
                       gas_estimate: int) -> dict:
     """Price the mint and refuse anything above the configured cap."""
     price = state["priceWei"]
@@ -155,7 +240,7 @@ def build_transaction(wallet: str, nonce: int, challenge: str, state: dict,
         "nonce": state["nonce"],
         "to": PROTOCOL.require_deployed(),
         "value": price,
-        "data": PROTOCOL.calldata(nonce, challenge),
+        "data": calldata,
         "gas": gas_limit,
         "maxFeePerGas": max_fee,
         "maxPriorityFeePerGas": priority_fee,
@@ -182,15 +267,17 @@ def broadcast(raw_hex: str, urls: tuple[str, ...], timeout: float = 8.0) -> tupl
 
 def submit(account, solution: dict, dry_run: bool) -> str | None:
     wallet = account.address
-    state = read_state(wallet)
+    state = read_state(wallet, solution)
     nonce = verify_solution(solution, wallet, state)
-    valid = confirm_on_chain(wallet, nonce, state["challenge"])
+    bindings = bindings_of(solution, state)
+    digest = powlib.digest({"wallet": wallet, "nonce": nonce, **bindings})
+    valid = confirm_on_chain(wallet, nonce, bindings, digest)
     if valid is False:
-        raise ValueError("contract rejected the proof in isValidProof")
+        raise ValueError("the contract does not agree with this proof")
 
-    calldata = PROTOCOL.calldata(nonce, state["challenge"])
+    calldata = calldata_for(solution, nonce, state)
     gas_estimate = estimate_gas(wallet, calldata, state["priceWei"])
-    transaction = build_transaction(wallet, nonce, state["challenge"], state, gas_estimate)
+    transaction = build_transaction(wallet, calldata, state, gas_estimate)
     signed = account.sign_transaction(transaction)
     raw_hex = "0x" + signed.raw_transaction.hex().removeprefix("0x")
     tx_hash = "0x" + signed.hash.hex().removeprefix("0x")
@@ -233,8 +320,13 @@ def check(account) -> None:
     state = read_state(account.address)
     price = state["priceWei"]
     print(f"balance    {state['balanceWei'] / 1e18:.6f} ETH")
-    print(f"challenge  {state['challenge']}")
-    print(f"difficulty {state['difficulty']} (target 2^{256 - state['difficulty']})")
+    if IS_FLYNODE:
+        print(f"prevWork   {state['prev']}")
+        print(f"anchor     {state['anchor']}")
+        print(f"bits       {state['difficulty']} for a rarity-0 cell")
+    else:
+        print(f"challenge  {state['challenge']}")
+        print(f"difficulty {state['difficulty']} (target 2^{256 - state['difficulty']})")
     print(f"price      {price / 1e18:.6f} ETH")
     print(f"minted     {state['minted']}/{state['maxSupply']}")
     print(f"nonce      {state['nonce']}  gasPrice {state['gasPriceWei']} wei")
