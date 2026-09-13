@@ -10,7 +10,7 @@ they find back over the same connection, and hands them to the local signer.
     python3 scripts/fleet.py remove --name box2                         # drop one
     python3 scripts/fleet.py check                  # can we reach every box, how many GPUs
     python3 scripts/fleet.py deploy                 # install the worker everywhere
-    python3 scripts/fleet.py start                  # start mining everywhere
+    python3 scripts/fleet.py start --blocks 16384   # start mining everywhere
     python3 scripts/fleet.py run                    # collect solutions + sign, locally
     python3 scripts/fleet.py status                 # what each box is doing
     python3 scripts/fleet.py stop                   # stop mining everywhere
@@ -273,10 +273,15 @@ def deploy(arguments, rentals: list[Rental]) -> None:
 
 def start(arguments, rentals: list[Rental]) -> None:
     wallet = arguments.wallet
+    shape = ""
+    for name, value in (("BLOCKS", arguments.blocks), ("THREADS", arguments.threads),
+                        ("ITERATIONS", arguments.iterations)):
+        if value:
+            shape += f"export HASHBROKER_{name}={int(value)}; "
     for rental in rentals:
         gpu_option = f"export HASHBROKER_GPUS={rental.gpus}; " if rental.gpus else ""
         command = (
-            f"cd {arguments.dir}; export HASHBROKER_WALLET={wallet}; {gpu_option}"
+            f"cd {arguments.dir}; export HASHBROKER_WALLET={wallet}; {gpu_option}{shape}"
             f"curl -sfSO {RAW_BASE}/autopilot.sh && bash autopilot.sh --no-signer --skip-benchmark"
         )
         result = run_ssh(rental, command, arguments.ssh, arguments.key, timeout=1800)
@@ -453,6 +458,9 @@ def main() -> None:
     parser.add_argument("--user", help="add: SSH user (default root)")
     parser.add_argument("--name", help="add/remove: the name of this box")
     parser.add_argument("--gpus", type=int, help="add: GPU count (default: ask the box)")
+    parser.add_argument("--blocks", type=int, help="start: CUDA grid size per worker")
+    parser.add_argument("--threads", type=int, help="start: threads per block")
+    parser.add_argument("--iterations", type=int, help="start: hashes per thread per launch")
     arguments = parser.parse_args()
 
     if arguments.command == "keygen":

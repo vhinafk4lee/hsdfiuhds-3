@@ -28,8 +28,10 @@ bash bootstrap.sh
 ```
 
 The benchmark self-tests the kernel, sweeps launch shapes, reports GH/s and the
-expected time per proof. Use its `--blocks/--threads/--iterations` suggestion in
-`start-all.sh` via `HASHBROKER_*` or by editing the worker command.
+expected time per proof. Feed its suggestion back with
+`fleet.py start --blocks N --threads N --iterations N`, or set
+`HASHBROKER_BLOCKS` / `HASHBROKER_THREADS` / `HASHBROKER_ITERATIONS` on the host.
+An RTX 5090 measured 10.3 GH/s at `--blocks 16384 --threads 256 --iterations 64`.
 
 An RTX 50xx card is Blackwell (sm_120): it needs a cupy build whose NVRTC can
 target it, which `bootstrap.sh` picks from the CUDA version `nvidia-smi`

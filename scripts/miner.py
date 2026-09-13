@@ -75,9 +75,12 @@ def main() -> None:
     parser.add_argument("--output", default="/opt/hashbroker/solution.json")
     parser.add_argument("--job-file", default="/opt/hashbroker/job.json")
     parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--blocks", type=int, default=8192)
-    parser.add_argument("--threads", type=int, default=256)
-    parser.add_argument("--iterations", type=int, default=64)
+    parser.add_argument("--blocks", type=int,
+                        default=int(os.environ.get("HASHBROKER_BLOCKS", "8192")))
+    parser.add_argument("--threads", type=int,
+                        default=int(os.environ.get("HASHBROKER_THREADS", "256")))
+    parser.add_argument("--iterations", type=int,
+                        default=int(os.environ.get("HASHBROKER_ITERATIONS", "64")))
     parser.add_argument("--keep-mining", action="store_true",
                         help="keep searching after a solution instead of exiting")
     args = parser.parse_args()

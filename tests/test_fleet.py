@@ -252,6 +252,32 @@ class FleetCommandTests(unittest.TestCase):
             self.assertIn("[signer] SIGNED", result.stdout)
             self.assertEqual(chain.sent, [], "a dry run must never broadcast")
 
+    def test_start_pushes_the_wallet_and_the_launch_shape(self):
+        """The remote command must carry what the worker cannot guess for itself."""
+        rentals = fleet.load_rentals(self.rentals)
+        arguments = argparse.Namespace(
+            wallet="0x" + "ab" * 20, dir="/opt/hashbroker", ssh=str(FAKE_SSH), key=None,
+            blocks=16384, threads=256, iterations=64)
+        with unittest.mock.patch.object(fleet, "run_ssh") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout="started", stderr="")
+            fleet.start(arguments, rentals)
+        command = run.call_args[0][1]
+        self.assertIn(f"export HASHBROKER_WALLET={arguments.wallet}", command)
+        self.assertIn("export HASHBROKER_BLOCKS=16384", command)
+        self.assertIn("export HASHBROKER_THREADS=256", command)
+        self.assertIn("export HASHBROKER_ITERATIONS=64", command)
+        self.assertIn("--no-signer", command)
+
+    def test_start_omits_an_unset_shape(self):
+        rentals = fleet.load_rentals(self.rentals)
+        arguments = argparse.Namespace(
+            wallet="0x" + "ab" * 20, dir="/opt/hashbroker", ssh=str(FAKE_SSH), key=None,
+            blocks=None, threads=None, iterations=None)
+        with unittest.mock.patch.object(fleet, "run_ssh") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            fleet.start(arguments, rentals)
+        self.assertNotIn("HASHBROKER_BLOCKS", run.call_args[0][1])
+
     def test_stop_reaches_every_host(self):
         result = self.fleet("stop")
         self.assertEqual(result.returncode, 0, result.stderr)
