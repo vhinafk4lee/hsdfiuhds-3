@@ -6,7 +6,7 @@ controller installs the worker on each of them over SSH, streams the solutions
 they find back over the same connection, and hands them to the local signer.
 
     python3 scripts/fleet.py keygen                 # make the SSH key, print the public half
-    python3 scripts/fleet.py add --target "ssh -p 41095 root@1.2.3.4"   # register a box
+    python3 scripts/fleet.py add --target "ssh -p 41095 root@1.2.3.4" [--target ...]  # register
     python3 scripts/fleet.py remove --name box2                         # drop one
     python3 scripts/fleet.py check                  # can we reach every box, how many GPUs
     python3 scripts/fleet.py deploy                 # install the worker everywhere
@@ -123,14 +123,13 @@ def parse_ssh_target(text: str) -> tuple[str, str, int]:
 
 
 def add(arguments) -> None:
-    """Append a rented box to rentals.json without hand-editing JSON."""
+    """Append rented boxes to rentals.json without hand-editing JSON."""
     path = Path(arguments.rentals)
-    if arguments.target:
-        user, host, port = parse_ssh_target(arguments.target)
-    elif arguments.host:
-        user, host, port = arguments.user or "root", arguments.host, arguments.port or 22
-    else:
-        raise SystemExit('pass --target "ssh -p 40123 root@1.2.3.4" or --host/--port')
+    targets = list(arguments.target or [])
+    if not targets and not arguments.host:
+        raise SystemExit('pass --target "ssh -p 40123 root@1.2.3.4" (repeatable), or --host/--port')
+    if arguments.name and len(targets) > 1:
+        raise SystemExit("--name applies to a single box; add them one at a time to name each")
 
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -139,20 +138,28 @@ def add(arguments) -> None:
     except FileNotFoundError:
         payload = []
 
-    name = arguments.name or f"box{len(payload) + 1}"
-    for item in payload:
-        if str(item.get("host")) == host and int(item.get("port", 22)) == port:
-            raise SystemExit(f"{host}:{port} is already in {path} as {item.get('name')}")
-        if str(item.get("name")) == name:
-            raise SystemExit(f"{path} already has a host named {name}; pass a different --name")
+    incoming = [parse_ssh_target(target) for target in targets]
+    if arguments.host:
+        incoming.append((arguments.user or "root", arguments.host, arguments.port or 22))
 
-    entry = {"name": name, "host": host, "port": port, "user": user}
-    if arguments.gpus:
-        entry["gpus"] = arguments.gpus
-    payload.append(entry)
+    added = []
+    for user, host, port in incoming:
+        name = arguments.name or f"box{len(payload) + 1}"
+        for item in payload:
+            if str(item.get("host")) == host and int(item.get("port", 22)) == port:
+                raise SystemExit(f"{host}:{port} is already in {path} as {item.get('name')}")
+            if str(item.get("name")) == name:
+                raise SystemExit(f"{path} already has a host named {name}; pass a different --name")
+        entry = {"name": name, "host": host, "port": port, "user": user}
+        if arguments.gpus:
+            entry["gpus"] = arguments.gpus
+        payload.append(entry)
+        added.append(entry)
+
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"added {name}: {user}@{host}:{port}"
-          + (f" with {arguments.gpus} GPUs" if arguments.gpus else ""))
+    for entry in added:
+        print(f"added {entry['name']}: {entry['user']}@{entry['host']}:{entry['port']}"
+              + (f" with {arguments.gpus} GPUs" if arguments.gpus else ""))
     print(f"{path} now has {len(payload)} host(s)")
 
 
@@ -474,7 +481,8 @@ def main() -> None:
     parser.add_argument("--run-for", type=float, default=0.0, help="stop after N seconds")
     parser.add_argument("--heartbeat", type=float, default=60.0,
                         help="seconds between liveness lines; 0 turns them off")
-    parser.add_argument("--target", help="add: the provider's connect string")
+    parser.add_argument("--target", action="append",
+                        help="add: the provider's connect string; repeat for several boxes")
     parser.add_argument("--host", help="add/remove: host address, instead of --target")
     parser.add_argument("--port", type=int, help="add: SSH port")
     parser.add_argument("--user", help="add: SSH user (default root)")

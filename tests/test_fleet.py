@@ -124,6 +124,31 @@ class AddTests(unittest.TestCase):
         self.assertEqual(rentals[0].gpus, 1)
         self.assertEqual(rentals[1].port, 2200)
 
+    def test_adds_several_boxes_at_once(self):
+        result = self.add("--target", "ssh -p 41095 root@137.175.76.24 -L 8080:localhost:8080",
+                          "--target", "ssh -p 45688 root@137.175.76.24",
+                          "--target", "ssh -p 40203 root@96.234.107.160",
+                          "--gpus", "1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rentals = fleet.load_rentals(self.path)
+        self.assertEqual([rental.port for rental in rentals], [41095, 45688, 40203])
+        self.assertEqual([rental.name for rental in rentals], ["box1", "box2", "box3"])
+        self.assertTrue(all(rental.gpus == 1 for rental in rentals))
+
+    def test_refuses_to_name_a_batch(self):
+        result = self.add("--target", "ssh -p 1 root@a", "--target", "ssh -p 2 root@b",
+                          "--name", "one")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("single box", result.stdout + result.stderr)
+
+    def test_a_duplicate_inside_a_batch_writes_nothing(self):
+        self.add("--target", "ssh -p 41095 root@137.175.76.24")
+        result = self.add("--target", "ssh -p 40203 root@96.234.107.160",
+                          "--target", "ssh -p 41095 root@137.175.76.24")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(fleet.load_rentals(self.path)), 1,
+                         "a rejected batch must not leave half of itself behind")
+
     def test_refuses_a_duplicate_name(self):
         self.add("--target", "ssh -p 41095 root@137.175.76.24", "--name", "vast-1")
         clash = self.add("--target", "ssh -p 45688 root@137.175.76.24", "--name", "vast-1")
