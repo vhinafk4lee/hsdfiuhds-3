@@ -155,7 +155,9 @@ then broadcasts. Run the signer on one host only — it owns the account nonce.
 python3 -m unittest discover -s tests -v
 ```
 
-70 tests, no GPU and no network needed. They cover the mainnet proof, the CUDA
+70 tests, no GPU and no network needed. On Windows the ones that drive a fake
+ssh or compile the kernel as C are skipped, since they need a POSIX shell and a
+C compiler; the rest run as they do on Linux. They cover the mainnet proof, the CUDA
 device functions (compiled as plain C and compared against `hashlib`), the RPC
 reads against an in-process stub chain, every safety refusal in the signer, and
 the full feed -> worker -> solution -> signed transaction pipeline.

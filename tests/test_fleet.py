@@ -2,6 +2,7 @@
 """Fleet controller checks, using a fake ssh that runs commands locally."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -88,6 +89,7 @@ class SshArgvTests(unittest.TestCase):
         self.assertNotIn("-i", fleet.ssh_argv(rental, "true", "ssh", None))
 
 
+@unittest.skipUnless(shutil.which("sh"), "the fake ssh runs POSIX shell commands")
 class FleetCommandTests(unittest.TestCase):
     """Runs fleet.py as a process, with fake_ssh.py standing in for ssh."""
 
@@ -155,6 +157,7 @@ class FleetCommandTests(unittest.TestCase):
         self.assertIn("box", result.stdout)
 
 
+@unittest.skipUnless(shutil.which("sh"), "the collector's remote loop is POSIX shell")
 class StreamProtocolTests(unittest.TestCase):
     def test_command_claims_prints_and_deletes(self):
         with tempfile.TemporaryDirectory() as workdir:
