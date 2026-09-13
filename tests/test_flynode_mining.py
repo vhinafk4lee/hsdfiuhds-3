@@ -300,6 +300,20 @@ class EndToEndTests(unittest.TestCase):
                               env=self.environment, capture_output=True, text=True,
                               timeout=timeout)
 
+    def test_the_frontier_cli_reports_what_is_claimed_and_what_is_next(self):
+        result = self.run_script("frontier.py", "--protocol", "flynode",
+                                 "--rpc", self.server.url, "--limit", "5",
+                                 "--wallet", ACCOUNT.address)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"claimed    {len(self.chain.occupied)} of 20100 cells",
+                      result.stdout)
+        self.assertIn("next mint", result.stdout)
+        listed = [line.split()[0] for line in result.stdout.splitlines()
+                  if line.startswith(" ") and line.split() and line.split()[0].isdigit()]
+        self.assertTrue(listed)
+        for cell in listed:
+            self.assertNotIn(int(cell), self.chain.occupied)
+
     def test_the_feed_publishes_a_mintable_cell(self):
         result = self.run_script("job_feed.py", "--wallet", ACCOUNT.address, "--once")
         self.assertEqual(result.returncode, 0, result.stderr)

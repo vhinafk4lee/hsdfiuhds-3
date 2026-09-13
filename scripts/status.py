@@ -52,8 +52,22 @@ def render(root: Path, runtime: Path, events_limit: int) -> str:
     else:
         minted = job.get("minted")
         supply = job.get("maxSupply", "?")
+        if job.get("cell") is not None:
+            # FlyNode mines a named cell, and which one it is matters more than
+            # the identity hash standing in for a challenge.
+            lines += [
+                f"cell       {job['cell']} {job.get('typeName', '?')} "
+                f"(rarity {job.get('rarityBits')}, region {job.get('region')})",
+                f"parent     {job.get('parent')}",
+                f"anchor     {job.get('anchor')} at block {job.get('anchorBlock')}",
+                f"claimed    {job.get('occupied')} cells seen on chain",
+            ]
+            if job.get("failsafeBits"):
+                lines.append(f"failsafe   -{job['failsafeBits']} bits "
+                             f"(rule says {job.get('predictedBits')})")
+        else:
+            lines.append(f"challenge  {job.get('challenge')}")
         lines += [
-            f"challenge  {job.get('challenge')}",
             f"difficulty {job.get('difficulty')}  target 2^{256 - int(job.get('difficulty', 0))}",
             f"minted     {minted}/{supply}",
             f"price      {int(job.get('priceWei', 0)) / 1e18:.6f} ETH",

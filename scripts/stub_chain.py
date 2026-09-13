@@ -250,6 +250,14 @@ class FlyNodeChain:
             return "0x" + word(self.required_bits(int(data[10:74], 16)))
         if selector == views["mined"]:
             return "0x" + word(1 if int(data[10:74], 16) in self.occupied else 0)
+        if selector == "0x" + self.protocol.validate_selector:
+            body = data[10:]
+            digest = powlib.digest({
+                "wallet": "0x" + body[24:64], "nonce": int(body[64:128], 16),
+                "prev": "0x" + body[128:192], "anchor": "0x" + body[192:256],
+                "typeId": int(body[256:320], 16),
+            }, self.protocol)
+            return "0x" + digest.hex()
         raise ValueError(f"stub has no answer for {selector}")
 
     def eth_getLogs(self, query: dict) -> list[dict]:

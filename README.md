@@ -30,6 +30,57 @@ calls before spending anything.
 | `totalSupply()` / `MAX_SUPPLY()` | minted so far / 4444 |
 | `lastMintBlock()` | block of the last accepted proof |
 
+## FlyNode
+
+The same miner drives a second contract, and it is not the same shape. FlyNode
+does not mint a token out of nowhere — it grows a graph over a 20100-neuron
+lattice, so a mint claims one free neuron and has to name a claimed neighbour to
+grow from, proving each against a Merkle root the contract holds.
+
+```
+contract     0x43c2CD04b757920DFe175a513E017499862bCA25   (chain 4663)
+deployed     block 62107948
+proof        keccak256( miner[20] || nonce[32] || prev[32] || anchor[32] || typeId[2] )
+wins when    the digest has at least requiredBits(rarity, wallet) leading zero bits
+submit       mine(nonce, anchorBlock, leaf, neuronProof, parent, edgeProof)
+             payable with exactly entryPrice()
+neuronsRoot  0x89c949af2a2e7752f5af8ecc1d4a98d3d72a5d5582332bfb595caf7d8c2a3d2b
+edgesRoot    0xdd0b52d2dbb96aa8f425e66c9bd83a5af6463f950abcc7541524761774c256cd
+```
+
+A neuron leaf is `(id, typeId, rarityBits, region)`. Rarity is how uncommon the
+type is — `round(log2(20100 / how many neurons share it))` — and it is added
+straight to the difficulty, so a type with 892 of its kind costs 4 bits and one
+with two costs 13. The difficulty the contract charges is
+
+```
+16 + retargetQ/4 + rarityBits + min(16, network streak) + min(16, your streak) - failsafe
+```
+
+but `requiredBits(rarity, wallet)` is the number that counts; the feed reads
+both and reports the gap, which is the failsafe.
+
+The dataset comes from the bundle the site ships. `extract_pathway.py` reads it
+by shape rather than by the minifier's names, and `lattice.py` rebuilds both
+trees and refuses to mine if they do not come out as the roots the contract
+holds. The proofs it generates for the one mint we have calldata for come back
+byte for byte identical (`tests/test_lattice.py`).
+
+Where the lattice has already grown comes from the contract's `Mined` logs. The
+contract is not verified, so nothing says which word of that event is the cell:
+`scan_mined` works it out by insisting a real id column holds a known neuron in
+every log, never repeats — a cell is claimed once — and that the parent column
+only ever points back at a cell an earlier log already claimed.
+
+```bash
+python3 scripts/lattice.py                       # rebuild and check both roots
+python3 scripts/frontier.py --protocol flynode   # what is claimed, what is next
+python3 scripts/fleet.py start --protocol flynode
+```
+
+Each box in a fleet gets its own `HASHBROKER_CELL_RANK`, so two of them never
+grind away at the same cell.
+
 ## Layout
 
 ```
@@ -40,7 +91,11 @@ scripts/solve_layout.py works out a new contract's preimage from one mint
 scripts/pow.py          reference proof: preimage -> SHA-256 -> difficulty check
 scripts/sha256_cuda.py  the SHA-256 CUDA kernel
 scripts/keccak_cuda.py  the Keccak-256 CUDA kernel
-scripts/merkle.py       OpenZeppelin-compatible trees, for contracts that need proofs
+scripts/merkle.py       Merkle trees as FlyNode builds them: dataset order, unpaired node promoted
+scripts/lattice.py      the neuron lattice and the proofs that claim a cell
+scripts/extract_pathway.py  the site's bundle -> scripts/data/pathway.json
+scripts/flynode.py      FlyNode's frontier, job reader and mine() calldata
+scripts/frontier.py     where the lattice has grown and what the next cell costs
 scripts/view.py         call any view on the protocol's contract
 scripts/miner.py        GPU worker (cupy), one process per GPU
 scripts/miner_cpu.py    CPU worker, for validating a deployment end to end

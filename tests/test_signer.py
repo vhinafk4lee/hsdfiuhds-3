@@ -181,5 +181,51 @@ class SubmitTests(SignerTestCase):
         self.assertEqual(self.chain.sent, [])
 
 
+class LedgerTests(unittest.TestCase):
+    """One mint per challenge, and only when the chain says it landed."""
+
+    def solution(self, challenge: str, nonce: int) -> dict:
+        return {"challenge": challenge, "nonce": str(nonce)}
+
+    def test_a_fresh_proof_goes_through(self):
+        ledger = signer.MintLedger()
+        self.assertIsNone(ledger.reason_to_skip(self.solution("0xaa", 1)))
+
+    def test_the_same_proof_twice_is_ignored_without_comment(self):
+        ledger = signer.MintLedger()
+        first = self.solution("0xaa", 1)
+        ledger.attempted(first)
+        self.assertEqual(ledger.reason_to_skip(first), "")
+
+    def test_a_second_proof_for_a_minted_challenge_is_refused(self):
+        """The expensive case: new nonce, same cell, already paid for."""
+        ledger = signer.MintLedger()
+        first = self.solution("0xaa", 1)
+        ledger.attempted(first)
+        self.assertTrue(ledger.landed(first, "0x1"))
+        self.assertEqual(ledger.reason_to_skip(self.solution("0xaa", 2)), "already minted")
+
+    def test_a_mint_that_reverted_leaves_the_challenge_open(self):
+        ledger = signer.MintLedger()
+        first = self.solution("0xaa", 1)
+        ledger.attempted(first)
+        self.assertFalse(ledger.landed(first, "0x0"))
+        self.assertIsNone(ledger.reason_to_skip(self.solution("0xaa", 2)))
+
+    def test_a_mint_with_no_receipt_leaves_the_challenge_open(self):
+        ledger = signer.MintLedger()
+        first = self.solution("0xaa", 1)
+        ledger.attempted(first)
+        self.assertFalse(ledger.landed(first, None))
+        self.assertIsNone(ledger.reason_to_skip(self.solution("0xaa", 2)))
+
+    def test_another_challenge_is_never_blocked_by_the_first(self):
+        ledger = signer.MintLedger()
+        first = self.solution("0xaa", 1)
+        ledger.attempted(first)
+        ledger.landed(first, "0x1")
+        self.assertIsNone(ledger.reason_to_skip(self.solution("0xbb", 1)))
+
+
 if __name__ == "__main__":
     unittest.main()

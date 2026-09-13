@@ -337,6 +337,42 @@ def check(account) -> None:
         print("WARNING: mint price alone is above the configured cap")
 
 
+class MintLedger:
+    """What has already been paid for, so nothing is paid for twice.
+
+    A challenge — a cell, for FlyNode — can only be won once, but workers keep
+    mining until the feed tells them it has moved. Without this the next proof
+    they find for work already minted buys a second, worthless mint.
+
+    A mint only closes a challenge once its receipt says it landed. One that
+    reverted or never surfaced leaves the challenge open for another try.
+    """
+
+    def __init__(self) -> None:
+        self._tried: set[str] = set()
+        self._minted: set[str] = set()
+
+    def reason_to_skip(self, solution: dict) -> str | None:
+        challenge = str(solution.get("challenge"))
+        if f"{challenge}:{solution.get('nonce')}" in self._tried:
+            return ""                       # the same proof again: quietly ignore it
+        if challenge in self._minted:
+            return "already minted"
+        return None
+
+    def attempted(self, solution: dict) -> None:
+        self._tried.add(f"{solution.get('challenge')}:{solution.get('nonce')}")
+
+    def landed(self, solution: dict, status) -> bool:
+        try:
+            won = status is not None and int(str(status), 16) == 1
+        except ValueError:
+            won = False
+        if won:
+            self._minted.add(str(solution.get("challenge")))
+        return won
+
+
 def consume_solutions(path: Path) -> list[tuple[Path, dict]]:
     files = sorted(path.glob("solution*.json")) if path.is_dir() else (
         [path] if path.exists() else []
@@ -368,13 +404,16 @@ def main() -> None:
     source = Path(arguments.solutions)
     print(f"SIGNER wallet={account.address} contract={PROTOCOL.require_deployed()} "
           f"cap={SUBMIT_CAP_WEI} dryRun={arguments.dry_run}", flush=True)
-    seen: set[str] = set()
+    ledger = MintLedger()
     while True:
         for file, solution in consume_solutions(source):
-            key = f"{solution.get('challenge')}:{solution.get('nonce')}"
-            if key in seen:
+            skip = ledger.reason_to_skip(solution)
+            if skip is not None:
+                if skip:
+                    log_event("SOLUTION_SKIPPED", file=str(file), reason=skip,
+                              challenge=solution.get("challenge"))
                 continue
-            seen.add(key)
+            ledger.attempted(solution)
             try:
                 tx_hash = submit(account, solution, arguments.dry_run)
             except ValueError as exc:
@@ -388,7 +427,8 @@ def main() -> None:
                 receipt = wait_for_receipt(tx_hash)
                 status = receipt.get("status") if receipt else None
                 log_event("RECEIPT", txHash=tx_hash, status=status,
-                          gasUsed=receipt.get("gasUsed") if receipt else None)
+                          gasUsed=receipt.get("gasUsed") if receipt else None,
+                          minted=ledger.landed(solution, status))
             if arguments.once:
                 return
         time.sleep(arguments.interval)
