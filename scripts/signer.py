@@ -20,6 +20,7 @@ from eth_account import Account
 
 import pow as powlib
 from job_state import call_batch, request_batch
+from keyfile import assert_private
 from protocol import PROTOCOL
 
 WALLET = os.environ.get("HASHBROKER_WALLET", "").strip()
@@ -47,9 +48,7 @@ def load_account() -> Account:
         raise SystemExit("set HASHBROKER_PRIVATE_KEY_FILE or HASHBROKER_PRIVATE_KEY")
     if not inline:
         path = Path(key_file)
-        mode = path.stat().st_mode & 0o077
-        if mode:
-            raise SystemExit(f"{path} is group or world readable; run chmod 600 on it")
+        assert_private(path)
         inline = path.read_text(encoding="utf-8").strip()
     account = Account.from_key(inline)
     if WALLET and account.address.lower() != WALLET.lower():
