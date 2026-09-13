@@ -75,7 +75,7 @@ rented boxes only hash and never see either.
 
 ```bash
 python3 scripts/fleet.py keygen          # prints the public key to paste into vast.ai
-cp scripts/rentals.example.json rentals.json     # fill in host, port, gpus per box
+python3 scripts/fleet.py add --target "ssh -p 41095 root@1.2.3.4" --gpus 1   # per box
 python3 scripts/fleet.py check           # reachable? how many GPUs?
 python3 scripts/fleet.py deploy          # install the worker on every box
 python3 scripts/fleet.py start --wallet 0x...    # start mining everywhere
@@ -155,7 +155,7 @@ then broadcasts. Run the signer on one host only — it owns the account nonce.
 python3 -m unittest discover -s tests -v
 ```
 
-70 tests, no GPU and no network needed. On Windows the ones that drive a fake
+77 tests, no GPU and no network needed. On Windows the ones that drive a fake
 ssh or compile the kernel as C are skipped, since they need a POSIX shell and a
 C compiler; the rest run as they do on Linux. They cover the mainnet proof, the CUDA
 device functions (compiled as plain C and compared against `hashlib`), the RPC

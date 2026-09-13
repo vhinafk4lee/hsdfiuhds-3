@@ -74,6 +74,62 @@ class RentalsTests(unittest.TestCase):
             fleet.load_rentals(self.root / "nope.json")
 
 
+class ConnectStringTests(unittest.TestCase):
+    def test_reads_a_vast_connect_string(self):
+        self.assertEqual(
+            fleet.parse_ssh_target("ssh -p 41095 root@137.175.76.24 -L 8080:localhost:8080"),
+            ("root", "137.175.76.24", 41095))
+
+    def test_reads_a_bare_target(self):
+        self.assertEqual(fleet.parse_ssh_target("user@example.net"), ("user", "example.net", 22))
+
+    def test_reads_host_colon_port(self):
+        self.assertEqual(fleet.parse_ssh_target("example.net:2222"), ("root", "example.net", 2222))
+
+    def test_refuses_a_string_without_a_host(self):
+        with self.assertRaises(SystemExit):
+            fleet.parse_ssh_target("ssh -p 22")
+
+    def test_refuses_a_port_that_is_not_a_port(self):
+        with self.assertRaises(SystemExit):
+            fleet.parse_ssh_target("ssh -p http root@example.net")
+
+
+class AddTests(unittest.TestCase):
+    def setUp(self):
+        self.workdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.workdir.cleanup)
+        self.path = Path(self.workdir.name) / "rentals.json"
+
+    def add(self, *arguments: str):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "fleet.py"), "add", "--rentals", str(self.path),
+             *arguments],
+            capture_output=True, text=True, timeout=60,
+        )
+
+    def test_creates_the_file_and_appends(self):
+        first = self.add("--target", "ssh -p 41095 root@137.175.76.24 -L 8080:localhost:8080",
+                         "--name", "vast-1", "--gpus", "1")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.add("--host", "192.0.2.9", "--port", "2200")
+        self.assertEqual(second.returncode, 0, second.stderr)
+
+        rentals = fleet.load_rentals(self.path)
+        self.assertEqual([rental.name for rental in rentals], ["vast-1", "box2"])
+        self.assertEqual(rentals[0].host, "137.175.76.24")
+        self.assertEqual(rentals[0].port, 41095)
+        self.assertEqual(rentals[0].gpus, 1)
+        self.assertEqual(rentals[1].port, 2200)
+
+    def test_refuses_a_duplicate_host(self):
+        self.add("--target", "ssh -p 41095 root@137.175.76.24")
+        again = self.add("--target", "ssh -p 41095 root@137.175.76.24")
+        self.assertNotEqual(again.returncode, 0)
+        self.assertIn("already in", again.stdout + again.stderr)
+        self.assertEqual(len(fleet.load_rentals(self.path)), 1)
+
+
 class SshArgvTests(unittest.TestCase):
     def test_carries_port_key_and_command(self):
         rental = fleet.Rental("box", "192.0.2.10", 40123, "root", 1)

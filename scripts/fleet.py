@@ -6,6 +6,7 @@ controller installs the worker on each of them over SSH, streams the solutions
 they find back over the same connection, and hands them to the local signer.
 
     python3 scripts/fleet.py keygen                 # make the SSH key, print the public half
+    python3 scripts/fleet.py add --target "ssh -p 41095 root@1.2.3.4"   # register a box
     python3 scripts/fleet.py check                  # can we reach every box, how many GPUs
     python3 scripts/fleet.py deploy                 # install the worker everywhere
     python3 scripts/fleet.py start                  # start mining everywhere
@@ -21,6 +22,7 @@ import argparse
 import json
 import os
 import queue
+import shlex
 import shutil
 import subprocess
 import sys
@@ -82,6 +84,72 @@ def load_rentals(path: Path) -> list[Rental]:
             raise SystemExit(f"host {name} has an invalid gpu count")
         rentals.append(Rental(name, host, port, str(item.get("user") or "root").strip(), gpus))
     return rentals
+
+
+def parse_ssh_target(text: str) -> tuple[str, str, int]:
+    """Read a provider's connect string, e.g. `ssh -p 41095 root@1.2.3.4 -L 8080:...`."""
+    tokens = shlex.split(text.strip())
+    user, host, port = "root", "", 22
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in ("-p", "-P"):
+            index += 1
+            if index >= len(tokens) or not tokens[index].isdigit():
+                raise SystemExit(f"expected a port after {token}")
+            port = int(tokens[index])
+        elif token in ("-L", "-R", "-D", "-i", "-o", "-l"):
+            index += 1  # option with an argument we do not need
+            if token == "-l" and index < len(tokens):
+                user = tokens[index]
+        elif token.startswith("-") or token == "ssh":
+            pass
+        elif "@" in token:
+            user, _, host = token.partition("@")
+        elif not host:
+            host = token
+        index += 1
+    if not host:
+        raise SystemExit(f"no host found in {text!r}")
+    if ":" in host:  # host:port form
+        host, _, tail = host.partition(":")
+        if tail.isdigit():
+            port = int(tail)
+    if not 0 < port <= 65535:
+        raise SystemExit(f"port {port} is out of range")
+    return user, host, port
+
+
+def add(arguments) -> None:
+    """Append a rented box to rentals.json without hand-editing JSON."""
+    path = Path(arguments.rentals)
+    if arguments.target:
+        user, host, port = parse_ssh_target(arguments.target)
+    elif arguments.host:
+        user, host, port = arguments.user or "root", arguments.host, arguments.port or 22
+    else:
+        raise SystemExit('pass --target "ssh -p 40123 root@1.2.3.4" or --host/--port')
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise SystemExit(f"{path} must contain a list")
+    except FileNotFoundError:
+        payload = []
+
+    for item in payload:
+        if str(item.get("host")) == host and int(item.get("port", 22)) == port:
+            raise SystemExit(f"{host}:{port} is already in {path} as {item.get('name')}")
+
+    entry = {"name": arguments.name or f"box{len(payload) + 1}",
+             "host": host, "port": port, "user": user}
+    if arguments.gpus:
+        entry["gpus"] = arguments.gpus
+    payload.append(entry)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"added {entry['name']}: {user}@{host}:{port}"
+          + (f" with {arguments.gpus} GPUs" if arguments.gpus else ""))
+    print(f"{path} now has {len(payload)} host(s)")
 
 
 def ssh_argv(rental: Rental, command: str, ssh: str, key: str | None) -> list[str]:
@@ -320,7 +388,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command",
-                        choices=("keygen", "check", "deploy", "start", "stop", "status",
+                        choices=("keygen", "add", "check", "deploy", "start", "stop", "status",
                                  "collect", "run"))
     parser.add_argument("--rentals", default=os.environ.get("HASHBROKER_RENTALS_FILE",
                                                             "rentals.json"))
@@ -334,10 +402,19 @@ def main() -> None:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--dry-run", action="store_true", help="sign but never broadcast")
     parser.add_argument("--run-for", type=float, default=0.0, help="stop after N seconds")
+    parser.add_argument("--target", help="add: the provider's connect string")
+    parser.add_argument("--host", help="add: host address, instead of --target")
+    parser.add_argument("--port", type=int, help="add: SSH port")
+    parser.add_argument("--user", help="add: SSH user (default root)")
+    parser.add_argument("--name", help="add: a name for this box")
+    parser.add_argument("--gpus", type=int, help="add: GPU count (default: ask the box)")
     arguments = parser.parse_args()
 
     if arguments.command == "keygen":
         keygen(arguments)
+        return
+    if arguments.command == "add":
+        add(arguments)
         return
 
     rentals = load_rentals(Path(arguments.rentals))
