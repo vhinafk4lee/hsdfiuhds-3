@@ -40,7 +40,7 @@ def rentals_file(directory: Path, name: str = "box") -> Path:
 def proof_for(wallet: str, challenge: str, difficulty: int) -> dict:
     target = powlib.target_for_difficulty(difficulty)
     for nonce in range(1 << 22):
-        digest = powlib.digest(wallet, nonce, challenge)
+        digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": challenge})
         if int.from_bytes(digest, "big") < target:
             return {"wallet": wallet, "nonce": str(nonce), "hash": "0x" + digest.hex(),
                     "challenge": challenge, "difficulty": difficulty, "foundAt": int(time.time())}

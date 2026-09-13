@@ -95,7 +95,7 @@ def verify_solution(solution: dict, wallet: str, state: dict) -> int:
     challenge = str(solution["challenge"]).lower()
     if challenge != state["challenge"].lower():
         raise ValueError("solution is for a challenge the chain has moved past")
-    digest = powlib.digest(wallet, nonce, challenge)
+    digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": challenge})
     if "0x" + digest.hex() != str(solution.get("hash", "")).lower():
         raise ValueError("solution hash does not match its own nonce")
     if int.from_bytes(digest, "big") >= state["target"]:

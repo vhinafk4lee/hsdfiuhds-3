@@ -1,0 +1,60 @@
+{
+  "name": "flynode",
+  "chainId": 4663,
+  "contract": "0x43c2CD04b757920DFe175a513E017499862bCA25",
+  "algorithm": "keccak256",
+  "preimage": [
+    {
+      "field": "wallet",
+      "size": 20
+    },
+    {
+      "field": "nonce",
+      "size": 32
+    },
+    {
+      "field": "prev",
+      "size": 32
+    },
+    {
+      "field": "anchor",
+      "size": 32
+    },
+    {
+      "field": "typeId",
+      "size": 2
+    }
+  ],
+  "mine": "mine(uint256,uint256,(uint32,uint16,uint8,uint8),bytes32[],uint32,bytes32[])",
+  "mineArgs": [
+    "nonce",
+    "anchorBlock",
+    "leaf",
+    "neuronProof",
+    "parent",
+    "edgeProof"
+  ],
+  "views": {
+    "prev": "prevWork()",
+    "anchor": "currentAnchor()",
+    "price": "entryPrice()",
+    "minted": "totalMinted()",
+    "maxSupply": "LATTICE()",
+    "lastMintBlock": "lastMintBlock()",
+    "requiredBits": "requiredBits(uint8,address)",
+    "mined": "mined(uint32)",
+    "retargetQ": "retargetQ()",
+    "networkStreak": "networkStreakNow()",
+    "addressStreak": "streakOf(address)",
+    "idleSince": "idleSince()"
+  },
+  "validate": "workHash(address,uint256,bytes32,bytes32,uint16)",
+  "anchorWindow": 250,
+  "rpc": [
+    "https://robinhood-rpc.publicnode.com",
+    "https://robinhood.rpc.blxrbdn.com",
+    "https://robinhood.drpc.org"
+  ],
+  "broadcastRpc": [],
+  "verified": false
+}

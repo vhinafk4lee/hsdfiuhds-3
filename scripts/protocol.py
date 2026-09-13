@@ -17,7 +17,7 @@ from Crypto.Hash import keccak
 
 PROTOCOL_DIR = Path(__file__).resolve().parent / "protocols"
 DEFAULT_PROTOCOL_NAME = "hashbroker"
-VARIABLE_FIELDS = ("wallet", "nonce", "challenge")
+VARIABLE_FIELDS = ("wallet", "nonce", "challenge", "prev", "anchor", "typeId")
 SUPPORTED_ALGORITHMS = ("sha256", "sha256d", "keccak256")
 
 

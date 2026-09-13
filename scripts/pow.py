@@ -31,9 +31,15 @@ def _bytes_for(field_name: str, values: dict[str, object], size: int) -> bytes:
     return data
 
 
-def preimage(wallet: str, nonce: int, challenge: str,
-             protocol: Protocol = PROTOCOL) -> bytes:
-    values = {"wallet": wallet, "nonce": nonce, "challenge": challenge}
+def required_fields(protocol: Protocol = PROTOCOL) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(field.name for field in protocol.preimage
+                               if field.name != "const"))
+
+
+def preimage(values: dict, protocol: Protocol = PROTOCOL) -> bytes:
+    missing = [name for name in required_fields(protocol) if name not in values]
+    if missing:
+        raise ValueError("proof needs " + ", ".join(missing))
     chunks = []
     for field in protocol.preimage:
         if field.name == "const":
@@ -53,9 +59,8 @@ def hash_bytes(material: bytes, protocol: Protocol = PROTOCOL) -> bytes:
     raise ValueError(f"unsupported algorithm {protocol.algorithm!r}")
 
 
-def digest(wallet: str, nonce: int, challenge: str,
-           protocol: Protocol = PROTOCOL) -> bytes:
-    return hash_bytes(preimage(wallet, nonce, challenge, protocol), protocol)
+def digest(values: dict, protocol: Protocol = PROTOCOL) -> bytes:
+    return hash_bytes(preimage(values, protocol), protocol)
 
 
 def sha256_pad(material: bytes) -> bytes:
@@ -68,12 +73,47 @@ def sha256_pad(material: bytes) -> bytes:
     return bytes(padded)
 
 
-def padded_words(wallet: str, challenge: str, protocol: Protocol = PROTOCOL) -> list[int]:
-    """The padded message with a zero nonce, as big-endian 32-bit words."""
+def padded_words(values: dict, protocol: Protocol = PROTOCOL) -> list[int]:
+    """The padded SHA-256 message with a zero nonce, as big-endian 32-bit words."""
     if protocol.algorithm not in ("sha256", "sha256d"):
         raise ValueError("padded_words only describes SHA-256 messages")
-    block = sha256_pad(preimage(wallet, 0, challenge, protocol))
+    block = sha256_pad(preimage({**values, "nonce": 0}, protocol))
     return [int.from_bytes(block[index:index + 4], "big") for index in range(0, len(block), 4)]
+
+
+KECCAK_RATE = 136
+
+
+def keccak_pad(material: bytes, rate: int = KECCAK_RATE) -> bytes:
+    """Keccak's own padding, which is not SHA-3's: 0x01, zeros, 0x80 in the last byte."""
+    if len(material) >= rate:
+        raise ValueError(f"preimage of {len(material)} bytes needs more than one Keccak block")
+    block = bytearray(material) + bytearray(rate - len(material))
+    block[len(material)] = 0x01
+    block[rate - 1] |= 0x80
+    return bytes(block)
+
+
+def keccak_lanes(values: dict, protocol: Protocol = PROTOCOL) -> list[int]:
+    """The padded message with a zero nonce, as the 17 little-endian lanes Keccak absorbs."""
+    if protocol.algorithm != "keccak256":
+        raise ValueError("keccak_lanes only describes Keccak messages")
+    block = keccak_pad(preimage({**values, "nonce": 0}, protocol))
+    return [int.from_bytes(block[index:index + 8], "little") for index in range(0, len(block), 8)]
+
+
+def nonce_lane_positions(protocol: Protocol = PROTOCOL) -> tuple[int, int, int, int]:
+    """Which lane and bit offset hold each 32-bit half of the searched nonce tail.
+
+    Lanes are little-endian, so a big-endian nonce byte at offset o lands in lane
+    o // 8 at bit (o % 8) * 8 — the kernel byte-swaps each half before placing it.
+    """
+    offset = protocol.nonce_offset + protocol.nonce_size - 8
+    if offset % 4:
+        raise ValueError("nonce tail is not 32-bit aligned in the preimage")
+    stream_lane, stream_shift = offset // 8, (offset % 8) * 8
+    counter_lane, counter_shift = (offset + 4) // 8, ((offset + 4) % 8) * 8
+    return stream_lane, stream_shift, counter_lane, counter_shift
 
 
 def nonce_word_indices(protocol: Protocol = PROTOCOL) -> tuple[int, int]:

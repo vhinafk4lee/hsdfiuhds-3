@@ -23,7 +23,7 @@ def device_name(device: int = 0) -> str:
 
 
 def message_buffer(wallet: str, challenge: str) -> tuple[np.ndarray, int]:
-    words = powlib.padded_words(wallet, challenge)
+    words = powlib.padded_words({"wallet": wallet, "challenge": challenge})
     if len(words) > MESSAGE_WORDS:
         raise SystemExit(
             f"preimage of {PROTOCOL.preimage_size} bytes needs more than two SHA-256 blocks"
@@ -52,7 +52,7 @@ def self_test(hash_one, message_gpu, blocks: int, doubled: int, stream_word: int
                           np.uint32(stream), np.uint32(counter), output))
     cp.cuda.runtime.deviceSynchronize()
     actual = digest_from_words(cp.asnumpy(output))
-    expected = powlib.digest(wallet, (stream << 32) | counter, challenge)
+    expected = powlib.digest({"wallet": wallet, "nonce": (stream << 32) | counter, "challenge": challenge})
     if actual != expected:
         raise SystemExit(f"GPU self-test failed: {actual.hex()} != {expected.hex()}")
     return actual

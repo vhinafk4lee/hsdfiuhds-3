@@ -182,7 +182,7 @@ def main() -> None:
 
         if int(found.get()[0]):
             nonce = (stream << 32) | int(found_counter.get()[0])
-            digest = powlib.digest(wallet, nonce, job["challenge"])
+            digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": job["challenge"]})
             reported = digest_from_words(cp.asnumpy(found_hash))
             if reported != digest or int.from_bytes(digest, "big") >= candidate_target:
                 raise RuntimeError("GPU candidate failed CPU verification")

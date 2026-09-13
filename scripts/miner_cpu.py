@@ -48,7 +48,7 @@ def search(wallet: str, job_file: Path, results: mp.Queue, stop: mp.Event) -> No
             counter = (counter + 1) & 0xFFFFFFFF
             if counter == 0:
                 stream = (stream + 1) & 0xFFFFFFFF
-            digest = powlib.digest(wallet, nonce, challenge)
+            digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": challenge})
             if int.from_bytes(digest, "big") < target:
                 results.put(("candidate", {
                     **job, "wallet": wallet, "nonce": str(nonce),

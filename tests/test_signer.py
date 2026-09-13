@@ -26,7 +26,7 @@ ACCOUNT = Account.from_key("0x" + "11" * 32)
 def find_proof(wallet: str, challenge: str, difficulty: int) -> tuple[int, bytes]:
     target = powlib.target_for_difficulty(difficulty)
     for nonce in range(1 << 22):
-        digest = powlib.digest(wallet, nonce, challenge)
+        digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": challenge})
         if int.from_bytes(digest, "big") < target:
             return nonce, digest
     raise AssertionError("no proof found for the test difficulty")

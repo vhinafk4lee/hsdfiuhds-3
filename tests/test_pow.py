@@ -16,45 +16,45 @@ CHALLENGE = "0x" + "22" * 32
 
 class PreimageTests(unittest.TestCase):
     def test_layout_size(self):
-        material = powlib.preimage(WALLET, 0, CHALLENGE)
+        material = powlib.preimage({"wallet": WALLET, "nonce": 0, "challenge": CHALLENGE})
         self.assertEqual(len(material), PROTOCOL.preimage_size)
 
     def test_nonce_is_big_endian_at_its_offset(self):
         nonce = 0x1234_5678_9ABC_DEF0
-        material = powlib.preimage(WALLET, nonce, CHALLENGE)
+        material = powlib.preimage({"wallet": WALLET, "nonce": nonce, "challenge": CHALLENGE})
         start = PROTOCOL.nonce_offset
         stop = start + PROTOCOL.nonce_size
         self.assertEqual(int.from_bytes(material[start:stop], "big"), nonce)
 
     def test_digest_matches_hashlib(self):
-        material = powlib.preimage(WALLET, 7, CHALLENGE)
-        self.assertEqual(powlib.digest(WALLET, 7, CHALLENGE),
+        material = powlib.preimage({"wallet": WALLET, "nonce": 7, "challenge": CHALLENGE})
+        self.assertEqual(powlib.digest({"wallet": WALLET, "nonce": 7, "challenge": CHALLENGE}),
                          hashlib.sha256(material).digest())
 
 
 class MessageLayoutTests(unittest.TestCase):
     def test_padding_is_block_aligned(self):
-        padded = powlib.sha256_pad(powlib.preimage(WALLET, 0, CHALLENGE))
+        padded = powlib.sha256_pad(powlib.preimage({"wallet": WALLET, "nonce": 0, "challenge": CHALLENGE}))
         self.assertEqual(len(padded) % 64, 0)
         self.assertEqual(padded[PROTOCOL.preimage_size], 0x80)
         self.assertEqual(int.from_bytes(padded[-8:], "big"), PROTOCOL.preimage_size * 8)
 
     def test_word_substitution_reproduces_the_nonce(self):
         """Writing stream/counter into the two words equals hashing that nonce."""
-        words = powlib.padded_words(WALLET, CHALLENGE)
+        words = powlib.padded_words({"wallet": WALLET, "challenge": CHALLENGE})
         stream_index, counter_index = powlib.nonce_word_indices()
         stream, counter = 0x13579BDF, 0x2468ACE0
         words[stream_index] = stream
         words[counter_index] = counter
         message = b"".join(word.to_bytes(4, "big") for word in words)
         nonce = (stream << 32) | counter
-        expected = powlib.sha256_pad(powlib.preimage(WALLET, nonce, CHALLENGE))
+        expected = powlib.sha256_pad(powlib.preimage({"wallet": WALLET, "nonce": nonce, "challenge": CHALLENGE}))
         self.assertEqual(message, expected)
         self.assertEqual(hashlib.sha256(message[:PROTOCOL.preimage_size]).digest(),
-                         powlib.digest(WALLET, nonce, CHALLENGE))
+                         powlib.digest({"wallet": WALLET, "nonce": nonce, "challenge": CHALLENGE}))
 
     def test_message_fits_two_blocks(self):
-        words = powlib.padded_words(WALLET, CHALLENGE)
+        words = powlib.padded_words({"wallet": WALLET, "challenge": CHALLENGE})
         self.assertLessEqual(len(words), 32)
 
 

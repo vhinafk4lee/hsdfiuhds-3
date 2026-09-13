@@ -100,12 +100,12 @@ class KernelSha256Tests(unittest.TestCase):
     def test_nonce_substitution_matches_the_reference_proof(self):
         wallet = "0x" + "ab" * 20
         challenge = "0x" + "cd" * 32
-        words = powlib.padded_words(wallet, challenge)
+        words = powlib.padded_words({"wallet": wallet, "challenge": challenge})
         stream_word, counter_word = powlib.nonce_word_indices()
         for stream, counter in ((0, 0), (1, 2), (0xDEADBEEF, 0x0BADF00D), (0xFFFFFFFF, 0xFFFFFFFF)):
             actual = self.device_digest(words, len(words) // 16, 0,
                                         stream_word, counter_word, stream, counter)
-            expected = powlib.digest(wallet, (stream << 32) | counter, challenge)
+            expected = powlib.digest({"wallet": wallet, "nonce": (stream << 32) | counter, "challenge": challenge})
             self.assertEqual(actual, expected, f"nonce {stream:08x}{counter:08x}")
 
 

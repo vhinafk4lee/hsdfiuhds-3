@@ -68,7 +68,7 @@ class StubChain:
             wallet = "0x" + body[24:64]
             nonce = int(body[64:128], 16)
             challenge = "0x" + body[128:192]
-            digest = powlib.digest(wallet, nonce, challenge)
+            digest = powlib.digest({"wallet": wallet, "nonce": nonce, "challenge": challenge})
             accepted = (challenge.lower() == self.challenge.lower()
                         and int.from_bytes(digest, "big")
                         < powlib.target_for_difficulty(self.difficulty))

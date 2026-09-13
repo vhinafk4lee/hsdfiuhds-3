@@ -30,20 +30,20 @@ CALLDATA = (
 
 class MainnetProofTests(unittest.TestCase):
     def test_reproduces_the_mined_hash(self):
-        self.assertEqual("0x" + powlib.digest(MINER, NONCE, CHALLENGE).hex(), MINED_HASH)
+        self.assertEqual("0x" + powlib.digest({"wallet": MINER, "nonce": NONCE, "challenge": CHALLENGE}).hex(), MINED_HASH)
 
     def test_preimage_is_84_bytes(self):
-        self.assertEqual(len(powlib.preimage(MINER, NONCE, CHALLENGE)), 84)
+        self.assertEqual(len(powlib.preimage({"wallet": MINER, "nonce": NONCE, "challenge": CHALLENGE})), 84)
         self.assertEqual(PROTOCOL.preimage_size, 84)
 
     def test_proof_beats_the_difficulty_it_was_accepted_at(self):
-        proof = powlib.digest(MINER, NONCE, CHALLENGE)
+        proof = powlib.digest({"wallet": MINER, "nonce": NONCE, "challenge": CHALLENGE})
         self.assertGreaterEqual(powlib.leading_zero_bits(proof), DIFFICULTY)
         self.assertTrue(powlib.meets(proof, powlib.target_for_difficulty(DIFFICULTY)))
 
     def test_a_wrong_wallet_does_not_reproduce_the_proof(self):
         other = "0x7156d3f8dee0659e95a816c08ef5f9a937777778"
-        self.assertNotEqual("0x" + powlib.digest(other, NONCE, CHALLENGE).hex(), MINED_HASH)
+        self.assertNotEqual("0x" + powlib.digest({"wallet": other, "nonce": NONCE, "challenge": CHALLENGE}).hex(), MINED_HASH)
 
     def test_rebuilds_the_exact_calldata(self):
         self.assertEqual(PROTOCOL.calldata(NONCE, CHALLENGE), CALLDATA)
@@ -52,12 +52,12 @@ class MainnetProofTests(unittest.TestCase):
         self.assertEqual(MINT_VALUE_WEI, 100_000_000_000_000)
 
     def test_gpu_message_agrees_with_the_reference(self):
-        words = powlib.padded_words(MINER, CHALLENGE)
+        words = powlib.padded_words({"wallet": MINER, "challenge": CHALLENGE})
         stream_index, counter_index = powlib.nonce_word_indices()
         words[stream_index] = NONCE >> 32
         words[counter_index] = NONCE & 0xFFFFFFFF
         message = b"".join(word.to_bytes(4, "big") for word in words)
-        self.assertEqual(message, powlib.sha256_pad(powlib.preimage(MINER, NONCE, CHALLENGE)))
+        self.assertEqual(message, powlib.sha256_pad(powlib.preimage({"wallet": MINER, "nonce": NONCE, "challenge": CHALLENGE})))
 
 
 if __name__ == "__main__":
