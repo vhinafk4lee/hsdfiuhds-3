@@ -262,7 +262,7 @@ class FleetCommandTests(unittest.TestCase):
         rentals = fleet.load_rentals(self.rentals)
         arguments = argparse.Namespace(
             wallet="0x" + "ab" * 20, dir="/opt/hashbroker", ssh=str(FAKE_SSH), key=None,
-            blocks=16384, threads=256, iterations=64)
+            blocks=16384, threads=256, iterations=64, protocol="hashbroker")
         with unittest.mock.patch.object(fleet, "run_ssh") as run:
             run.return_value = subprocess.CompletedProcess([], 0, stdout="started", stderr="")
             fleet.start(arguments, rentals)
@@ -271,13 +271,14 @@ class FleetCommandTests(unittest.TestCase):
         self.assertIn("export HASHBROKER_BLOCKS=16384", command)
         self.assertIn("export HASHBROKER_THREADS=256", command)
         self.assertIn("export HASHBROKER_ITERATIONS=64", command)
+        self.assertIn("export HASHBROKER_PROTOCOL=hashbroker", command)
         self.assertIn("--no-signer", command)
 
     def test_start_omits_an_unset_shape(self):
         rentals = fleet.load_rentals(self.rentals)
         arguments = argparse.Namespace(
             wallet="0x" + "ab" * 20, dir="/opt/hashbroker", ssh=str(FAKE_SSH), key=None,
-            blocks=None, threads=None, iterations=None)
+            blocks=None, threads=None, iterations=None, protocol="")
         with unittest.mock.patch.object(fleet, "run_ssh") as run:
             run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
             fleet.start(arguments, rentals)

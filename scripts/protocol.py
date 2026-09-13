@@ -15,7 +15,8 @@ from pathlib import Path
 
 from Crypto.Hash import keccak
 
-DEFAULT_PROTOCOL_FILE = Path(__file__).resolve().parent / "protocol.json"
+PROTOCOL_DIR = Path(__file__).resolve().parent / "protocols"
+DEFAULT_PROTOCOL_NAME = "hashbroker"
 VARIABLE_FIELDS = ("wallet", "nonce", "challenge")
 SUPPORTED_ALGORITHMS = ("sha256", "sha256d", "keccak256")
 
@@ -105,8 +106,8 @@ class Protocol:
     def require_deployed(self) -> str:
         if not self.contract:
             raise SystemExit(
-                "contract address is unknown: set HASHBROKER_CONTRACT or fill "
-                f"\"contract\" in {DEFAULT_PROTOCOL_FILE.name}"
+                f"contract address is unknown for protocol {self.name!r}: "
+                "set HASHBROKER_CONTRACT or fill in \"contract\" in its protocol file"
             )
         return self.contract
 
@@ -168,9 +169,31 @@ def _parse(payload: dict) -> Protocol:
     )
 
 
+def available() -> list[str]:
+    return sorted(path.stem for path in PROTOCOL_DIR.glob("*.json"))
+
+
+def resolve(path: str | os.PathLike[str] | None = None) -> Path:
+    """An explicit path wins, then a file from the environment, then a name."""
+    if path:
+        return Path(path)
+    configured = os.environ.get("HASHBROKER_PROTOCOL_FILE", "").strip()
+    if configured:
+        return Path(configured)
+    name = os.environ.get("HASHBROKER_PROTOCOL", DEFAULT_PROTOCOL_NAME).strip()
+    source = PROTOCOL_DIR / f"{name}.json"
+    if not source.exists():
+        raise SystemExit(f"no protocol named {name!r}; available: {', '.join(available())}")
+    return source
+
+
 def load(path: str | os.PathLike[str] | None = None) -> Protocol:
-    source = Path(path or os.environ.get("HASHBROKER_PROTOCOL_FILE", DEFAULT_PROTOCOL_FILE))
-    return _parse(json.loads(source.read_text(encoding="utf-8")))
+    source = resolve(path)
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SystemExit(f"protocol file not found: {source}")
+    return _parse(payload)
 
 
 PROTOCOL = load()

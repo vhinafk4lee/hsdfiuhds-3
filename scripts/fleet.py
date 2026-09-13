@@ -278,6 +278,8 @@ def start(arguments, rentals: list[Rental]) -> None:
                         ("ITERATIONS", arguments.iterations)):
         if value:
             shape += f"export HASHBROKER_{name}={int(value)}; "
+    if arguments.protocol:
+        shape += f"export HASHBROKER_PROTOCOL={shlex.quote(arguments.protocol)}; "
     for rental in rentals:
         gpu_option = f"export HASHBROKER_GPUS={rental.gpus}; " if rental.gpus else ""
         command = (
@@ -478,6 +480,8 @@ def main() -> None:
     parser.add_argument("--user", help="add: SSH user (default root)")
     parser.add_argument("--name", help="add/remove: the name of this box")
     parser.add_argument("--gpus", type=int, help="add: GPU count (default: ask the box)")
+    parser.add_argument("--protocol", default=os.environ.get("HASHBROKER_PROTOCOL", ""),
+                        help="start: which contract to mine (see scripts/protocols/)")
     parser.add_argument("--blocks", type=int, help="start: CUDA grid size per worker")
     parser.add_argument("--threads", type=int, help="start: threads per block")
     parser.add_argument("--iterations", type=int, help="start: hashes per thread per launch")

@@ -33,8 +33,9 @@ calls before spending anything.
 ## Layout
 
 ```
-scripts/protocol.json   contract, chain, ABI signatures, preimage layout
-scripts/protocol.py     loads that file, derives selectors, builds mine() calldata
+scripts/protocols/*.json  one file per contract: chain, ABI, preimage layout
+scripts/protocol.py     loads one of them, derives selectors, builds mine() calldata
+scripts/solve_layout.py works out a new contract's preimage from one mint
 scripts/pow.py          reference proof: preimage -> SHA-256 -> difficulty check
 scripts/sha256_cuda.py  the CUDA kernel source
 scripts/miner.py        GPU worker (cupy), one process per GPU
@@ -155,7 +156,7 @@ then broadcasts. Run the signer on one host only — it owns the account nonce.
 python3 -m unittest discover -s tests -v
 ```
 
-88 tests, no GPU and no network needed. On Windows the ones that drive a fake
+98 tests, no GPU and no network needed. On Windows the ones that drive a fake
 ssh or compile the kernel as C are skipped, since they need a POSIX shell and a
 C compiler; the rest run as they do on Linux. They cover the mainnet proof, the CUDA
 device functions (compiled as plain C and compared against `hashlib`), the RPC
