@@ -49,6 +49,7 @@ scripts/benchmark.py    measures a GPU's proof rate, no wallet needed
 scripts/playground.py   the whole miner against a fake chain, for free
 scripts/stub_chain.py   that fake chain
 scripts/collect_protocol.py  re-derives the ABI from the chain
+scripts/fleet.py        controller: keygen, deploy, start, collect, sign, status
 scripts/autopilot.sh    bare box -> mining unattended, one command
 scripts/newkey.py       creates a 0600 mining key, prints only the address
 scripts/bootstrap.sh start-all.sh stop-all.sh   host setup and process control
@@ -66,6 +67,30 @@ A stub node serves the contract's views at a difficulty a CPU solves in seconds
 and accepts mints, advancing the challenge like the real contract. The feed,
 worker and signer that run against it are the same processes that run on a rig.
 `references/how-it-works.md` walks through what each of them does.
+
+## A fleet: your machine drives rented boxes
+
+Your machine is the controller. It holds the wallet key and the SSH key; the
+rented boxes only hash and never see either.
+
+```bash
+python3 scripts/fleet.py keygen          # prints the public key to paste into vast.ai
+cp scripts/rentals.example.json rentals.json     # fill in host, port, gpus per box
+python3 scripts/fleet.py check           # reachable? how many GPUs?
+python3 scripts/fleet.py deploy          # install the worker on every box
+python3 scripts/fleet.py start --wallet 0x...    # start mining everywhere
+python3 scripts/fleet.py run             # collect solutions and sign, here
+python3 scripts/fleet.py status          # per-box utilisation and hashrate
+python3 scripts/fleet.py stop            # stop mining everywhere
+```
+
+`run` keeps one long-lived SSH connection per box. A worker that finds a proof
+writes `solution-gpuN.json`; the remote side of that connection claims the file,
+streams it back as one line, and deletes it, so no proof is ever sent twice. The
+controller writes it into the local solutions directory, where the signer
+re-verifies it against the live challenge and mints.
+
+Add `--dry-run` to `run` to watch the whole fleet sign without spending.
 
 ## Unattended mining on a rented box
 
@@ -130,7 +155,7 @@ then broadcasts. Run the signer on one host only — it owns the account nonce.
 python3 -m unittest discover -s tests -v
 ```
 
-56 tests, no GPU and no network needed. They cover the mainnet proof, the CUDA
+67 tests, no GPU and no network needed. They cover the mainnet proof, the CUDA
 device functions (compiled as plain C and compared against `hashlib`), the RPC
 reads against an in-process stub chain, every safety refusal in the signer, and
 the full feed -> worker -> solution -> signed transaction pipeline.

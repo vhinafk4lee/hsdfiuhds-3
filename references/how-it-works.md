@@ -113,7 +113,26 @@ signer holding the key.
 `status.py` renders the job file, pending solutions, and the signer's event log.
 It reads files only — safe to run anywhere.
 
-## 8. Learning by breaking it
+## 8. A fleet (`fleet.py`)
+
+One controller, many rented boxes. The split follows from who can be trusted
+with what: a rented box is someone else's machine, so it gets no wallet key and
+no SSH private key — it only hashes. The controller keeps both, and is the only
+place a transaction is signed.
+
+Solutions travel over one long-lived SSH connection per box. The remote end runs
+a small shell loop that **claims** each `solution-*.json` (renames it), prints it
+as one line, and deletes it. Claiming before printing is what makes a dropped
+connection safe: a proof is either still on the box or already on its way, never
+both. The controller writes each line into the signer's directory, and the
+signer re-verifies it from scratch — a solution arriving over the network is
+data, not a promise.
+
+`fleet.py deploy` and `start` are the same `bootstrap.sh` and `autopilot.sh` a
+single box would run, just driven remotely, and `start` passes `--no-signer` so
+no rented box ever tries to spend.
+
+## 9. Learning by breaking it
 
 ```bash
 python3 scripts/playground.py --difficulty 20 --seconds 60

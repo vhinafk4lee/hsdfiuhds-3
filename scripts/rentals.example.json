@@ -1,0 +1,16 @@
+[
+  {
+    "name": "vast-1",
+    "host": "192.0.2.10",
+    "port": 40123,
+    "user": "root",
+    "gpus": 1
+  },
+  {
+    "name": "vast-2",
+    "host": "192.0.2.11",
+    "port": 41999,
+    "user": "root",
+    "gpus": 8
+  }
+]
