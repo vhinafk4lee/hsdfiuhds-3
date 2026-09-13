@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fleet controller checks, using a fake ssh that runs commands locally."""
+import argparse
 import json
 import os
 import shutil
@@ -9,6 +10,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,6 +174,25 @@ class FleetCommandTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ok", result.stdout)
         self.assertIn("gpus=", result.stdout)
+
+    def test_check_explains_a_refused_key(self):
+        rental = fleet.Rental("box", "192.0.2.10", 40123, "root", None)
+        arguments = argparse.Namespace(ssh=str(FAKE_SSH), key=None)
+        with unittest.mock.patch.object(fleet, "run_ssh") as run:
+            run.return_value = subprocess.CompletedProcess(
+                [], 255, stdout="", stderr="root@192.0.2.10: Permission denied (publickey).")
+            line = fleet.probe(rental, arguments)
+        self.assertIn("FAILED", line)
+        self.assertIn("add the public key", line)
+
+    def test_check_explains_a_timeout(self):
+        rental = fleet.Rental("box", "192.0.2.10", 40123, "root", None)
+        arguments = argparse.Namespace(ssh=str(FAKE_SSH), key=None)
+        with unittest.mock.patch.object(fleet, "run_ssh",
+                                        side_effect=subprocess.TimeoutExpired("ssh", 30)):
+            line = fleet.probe(rental, arguments)
+        self.assertIn("timeout", line)
+        self.assertIn("port is wrong", line)
 
     def test_collect_claims_a_solution_and_removes_it_remotely(self):
         solution = {"wallet": ACCOUNT.address, "nonce": "1", "hash": "0x" + "0a" * 32,

@@ -19,6 +19,7 @@ Hosts live in rentals.json; copy scripts/rentals.example.json and fill it in.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import queue
@@ -194,23 +195,39 @@ def keygen(arguments) -> None:
     print(f"\nThe private half stays here: {path}. Never copy it to a rented box.")
 
 
-def check(arguments, rentals: list[Rental]) -> None:
+def probe(rental: Rental, arguments) -> str:
+    """One line describing whether this box is usable, and why not when it is not."""
     command = "echo HASHBROKER_OK; nvidia-smi -L 2>/dev/null | wc -l"
-    for rental in rentals:
-        try:
-            result = run_ssh(rental, command, arguments.ssh, arguments.key, timeout=40)
-        except subprocess.SubprocessError as exc:
-            print(f"{rental.name:<12} unreachable ({type(exc).__name__})")
-            continue
-        if "HASHBROKER_OK" not in result.stdout:
-            detail = (result.stderr or result.stdout).strip().splitlines()
-            print(f"{rental.name:<12} unreachable: {detail[-1] if detail else 'no output'}")
-            continue
+    try:
+        result = run_ssh(rental, command, arguments.ssh, arguments.key, timeout=30)
+    except subprocess.TimeoutExpired:
+        return f"{rental.name:<12} timeout   {rental.target}:{rental.port}  (host down, or the port is wrong)"
+    except FileNotFoundError:
+        raise SystemExit(f"ssh client not found: {arguments.ssh}")
+    except subprocess.SubprocessError as exc:
+        return f"{rental.name:<12} error     {type(exc).__name__}"
+    if "HASHBROKER_OK" in result.stdout:
         gpus = 0
         for line in result.stdout.splitlines():
             if line.strip().isdigit():
                 gpus = int(line.strip())
-        print(f"{rental.name:<12} ok  {rental.target}:{rental.port}  gpus={gpus}")
+        note = "" if gpus else "  (no GPU visible: check the image, or use --mode cpu)"
+        return f"{rental.name:<12} ok        {rental.target}:{rental.port}  gpus={gpus}{note}"
+    reason = (result.stderr or result.stdout).strip().splitlines()
+    detail = reason[-1] if reason else "no output"
+    if "Permission denied" in detail or "publickey" in detail:
+        detail = "key not accepted: add the public key to this instance"
+    elif "Connection refused" in detail:
+        detail = "connection refused: wrong port, or the box is still starting"
+    elif "Could not resolve" in detail:
+        detail = "cannot resolve the host address"
+    return f"{rental.name:<12} FAILED    {detail}"
+
+
+def check(arguments, rentals: list[Rental]) -> None:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(rentals))) as pool:
+        for line in pool.map(lambda rental: probe(rental, arguments), rentals):
+            print(line, flush=True)
 
 
 def deploy(arguments, rentals: list[Rental]) -> None:
