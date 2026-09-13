@@ -21,7 +21,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from keccak_pure import keccak256  # noqa: E402
+from keccak_pure import keccak256 as keccak_fallback  # noqa: E402
+
+try:  # pycryptodome is ~100x faster, and the search runs hundreds of thousands of hashes
+    from Crypto.Hash import keccak as _keccak
+
+    def keccak256(data: bytes) -> bytes:
+        return _keccak.new(digest_bits=256, data=data).digest()
+except ImportError:  # pragma: no cover - exercised only without pycryptodome
+    keccak256 = keccak_fallback
 
 ALGORITHMS = {
     "sha256": lambda data: hashlib.sha256(data).digest(),

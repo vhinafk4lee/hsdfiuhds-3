@@ -50,6 +50,7 @@ class Protocol:
     algorithm: str
     preimage: tuple[Field, ...]
     mine_signature: str
+    mine_selector_override: str
     mine_args: tuple[str, ...]
     views: dict[str, str]
     validate_signature: str
@@ -85,6 +86,11 @@ class Protocol:
 
     @property
     def mine_selector(self) -> str:
+        """The signature when we know it, otherwise the selector read from a mint."""
+        if self.mine_selector_override:
+            return self.mine_selector_override
+        if not self.mine_signature:
+            raise SystemExit("protocol has neither a mine signature nor a mine selector")
         return selector(self.mine_signature)
 
     @property
@@ -153,13 +159,17 @@ def _parse(payload: dict) -> Protocol:
         raise ValueError("protocol needs at least one RPC endpoint")
 
     mine_args = tuple(str(arg) for arg in payload.get("mineArgs", ()))
+    override = str(payload.get("mineSelector", "")).removeprefix("0x").lower()
+    if override and (len(override) != 8 or any(c not in "0123456789abcdef" for c in override)):
+        raise ValueError("mineSelector must be 4 bytes of hex")
     return Protocol(
         name=str(payload.get("name", "hashbroker")),
         chain_id=int(payload.get("chainId", 0)),
         contract=contract,
         algorithm=algorithm,
         preimage=tuple(fields),
-        mine_signature=str(payload["mine"]),
+        mine_signature=str(payload.get("mine", "")),
+        mine_selector_override=override,
         mine_args=mine_args,
         views=dict(payload.get("views", {})),
         validate_signature=str(payload.get("validate", "")),
@@ -206,7 +216,8 @@ def describe() -> str:
         f"contract   {PROTOCOL.contract or '<unset>'}",
         f"algorithm  {PROTOCOL.algorithm}",
         f"preimage   {fields} = {PROTOCOL.preimage_size} bytes",
-        f"mine       {PROTOCOL.mine_signature} -> 0x{PROTOCOL.mine_selector}",
+        f"mine       {PROTOCOL.mine_signature or '<unknown signature>'} "
+        f"-> 0x{PROTOCOL.mine_selector}",
         "views      " + ", ".join(
             f"{key}={signature}" for key, signature in sorted(PROTOCOL.views.items())
         ),
