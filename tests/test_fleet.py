@@ -218,6 +218,11 @@ class FleetCommandTests(unittest.TestCase):
         self.assertIn("timeout", line)
         self.assertIn("port is wrong", line)
 
+    def test_collect_reports_that_it_is_still_connected(self):
+        result = self.fleet("collect", "--run-for", "4", "--heartbeat", "1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ALIVE connected 1/1", result.stdout)
+
     def test_collect_claims_a_solution_and_removes_it_remotely(self):
         solution = {"wallet": ACCOUNT.address, "nonce": "1", "hash": "0x" + "0a" * 32,
                     "challenge": CHALLENGE, "difficulty": 12, "foundAt": 0}

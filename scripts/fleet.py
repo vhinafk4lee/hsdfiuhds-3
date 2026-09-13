@@ -338,6 +338,8 @@ class Collector(threading.Thread):
         self.sink = sink
         self.stopping = stopping
         self.process: subprocess.Popen | None = None
+        self.connected_at: float | None = None
+        self.solutions = 0
 
     def run(self) -> None:
         backoff = 1.0
@@ -353,6 +355,7 @@ class Collector(threading.Thread):
                 print(f"[{self.rental.name}] cannot start ssh: {exc}", flush=True)
                 return
             assert self.process.stdout is not None
+            self.connected_at = time.time()
             for line in self.process.stdout:
                 line = line.strip()
                 if not line:
@@ -362,9 +365,11 @@ class Collector(threading.Thread):
                 except ValueError:
                     continue
                 if isinstance(solution, dict):
+                    self.solutions += 1
                     self.sink.put((self.rental.name, solution))
             self.process.stdout.close()
             self.process = None
+            self.connected_at = None
             if self.stopping.is_set():
                 return
             if time.monotonic() - started > 60:
@@ -399,11 +404,20 @@ def collect(arguments, rentals: list[Rental], signer: Service | None = None) -> 
     solutions = Path(arguments.solutions)
     deadline = time.monotonic() + arguments.run_for if arguments.run_for else None
     received = 0
+    last_heartbeat = time.monotonic()
     try:
         while True:
             now = time.monotonic()
             if deadline is not None and now >= deadline:
                 break
+            if arguments.heartbeat and now - last_heartbeat >= arguments.heartbeat:
+                last_heartbeat = now
+                connected = [collector for collector in collectors
+                             if collector.connected_at is not None]
+                detail = " ".join(f"{collector.rental.name}={collector.solutions}"
+                                  for collector in collectors)
+                print(f"ALIVE connected {len(connected)}/{len(collectors)}  "
+                      f"solutions {received}  [{detail}]", flush=True)
             if signer is not None:
                 signer.supervise(now)
                 if signer.fatal:
@@ -456,6 +470,8 @@ def main() -> None:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--dry-run", action="store_true", help="sign but never broadcast")
     parser.add_argument("--run-for", type=float, default=0.0, help="stop after N seconds")
+    parser.add_argument("--heartbeat", type=float, default=60.0,
+                        help="seconds between liveness lines; 0 turns them off")
     parser.add_argument("--target", help="add: the provider's connect string")
     parser.add_argument("--host", help="add/remove: host address, instead of --target")
     parser.add_argument("--port", type=int, help="add: SSH port")
