@@ -1,5 +1,6 @@
 const BASE = 'https://api.geckoterminal.com/api/v2';
 const HEADERS = { Accept: 'application/json;version=20230302' };
+const PAGE_SIZE = 20;
 
 async function get(path) {
   const res = await fetch(`${BASE}${path}`, { headers: HEADERS });
@@ -22,6 +23,7 @@ function tokenSymbols(included) {
  */
 export async function fetchPools(network, maxPages) {
   const pools = [];
+  const seen = new Set();
 
   for (let page = 1; page <= maxPages; page++) {
     const body = await get(`/networks/${network}/pools?page=${page}`);
@@ -34,6 +36,9 @@ export async function fetchPools(network, maxPages) {
       const a = item?.attributes ?? {};
       const baseId = item?.relationships?.base_token?.data?.id;
       const quoteId = item?.relationships?.quote_token?.data?.id;
+
+      if (!a.address || seen.has(a.address)) continue;
+      seen.add(a.address);
 
       pools.push({
         address: a.address,
@@ -49,7 +54,9 @@ export async function fetchPools(network, maxPages) {
       });
     }
 
-    if (!body?.links?.next) break;
+    // links.next is not always present, and trusting it truncated the scan to
+    // the first page. A short page is the reliable end-of-list signal.
+    if (items.length < PAGE_SIZE) break;
   }
 
   return pools;
