@@ -15,7 +15,7 @@ function remember(key) {
 }
 
 async function runCycle(config) {
-  const pools = await fetchPools(config.network, config.maxPoolPages);
+  const pools = await fetchPools(config.network, config.maxPoolPages, config.thresholdUsd);
 
   // A candle of `windowMinutes` that crossed the threshold is always contained in
   // the wider rolling window below, so filtering on it cannot drop a real hit.

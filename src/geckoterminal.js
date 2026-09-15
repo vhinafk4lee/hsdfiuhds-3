@@ -2,8 +2,17 @@ const BASE = 'https://api.geckoterminal.com/api/v2';
 const HEADERS = { Accept: 'application/json;version=20230302' };
 const PAGE_SIZE = 20;
 
-async function get(path) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function get(path, { retries = 1 } = {}) {
   const res = await fetch(`${BASE}${path}`, { headers: HEADERS });
+
+  if (res.status === 429 && retries > 0) {
+    const retryAfter = Number(res.headers.get('retry-after'));
+    await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 5000);
+    return get(path, { retries: retries - 1 });
+  }
+
   if (!res.ok) throw new Error(`GeckoTerminal ${path} -> HTTP ${res.status}`);
   return res.json();
 }
@@ -21,14 +30,20 @@ function tokenSymbols(included) {
  * A pool that traded the threshold within one minute necessarily shows at least
  * that much in its 5m window, so this list can never miss a candidate.
  */
-export async function fetchPools(network, maxPages) {
+export async function fetchPools(network, maxPages, thresholdUsd) {
   const pools = [];
   const seen = new Set();
+  let descending = true;
+  let previous = Infinity;
 
   for (let page = 1; page <= maxPages; page++) {
+    if (page > 1) await sleep(1500);
+
     // Without the include the response carries no token objects, leaving every
     // alert without a symbol or contract address.
-    const body = await get(`/networks/${network}/pools?page=${page}&include=base_token,quote_token`);
+    const body = await get(
+      `/networks/${network}/pools?page=${page}&sort=h24_volume_usd_desc&include=base_token,quote_token`,
+    );
     const items = body?.data ?? [];
     if (items.length === 0) break;
 
@@ -42,6 +57,10 @@ export async function fetchPools(network, maxPages) {
       if (!a.address || seen.has(a.address)) continue;
       seen.add(a.address);
 
+      const volume24h = Number(a.volume_usd?.h24) || 0;
+      if (volume24h > previous) descending = false;
+      previous = volume24h;
+
       pools.push({
         address: a.address,
         name: a.name,
@@ -52,9 +71,15 @@ export async function fetchPools(network, maxPages) {
         liquidityUsd: Number(a.reserve_in_usd) || 0,
         volume5m: Number(a.volume_usd?.m5) || 0,
         volume1h: Number(a.volume_usd?.h1) || 0,
-        volume24h: Number(a.volume_usd?.h24) || 0,
+        volume24h,
       });
     }
+
+    // A window that trades the threshold sits inside the last 24h, so a pool
+    // below it in 24h volume cannot hold one. Sorted descending, everything
+    // after this point is below it too — but only stop if the data really came
+    // back in that order, otherwise keep paging rather than trust the sort.
+    if (descending && previous < thresholdUsd) break;
 
     // links.next is not always present, and trusting it truncated the scan to
     // the first page. A short page is the reliable end-of-list signal.
