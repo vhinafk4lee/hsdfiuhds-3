@@ -19,16 +19,35 @@ async function runCycle(config, scanner, gate) {
     if (isBlacklisted(pool, config.blacklist)) skipped.push(pool.baseSymbol ?? pool.name);
     else watched.push(pool);
   }
-  const candidates = watched
-    .filter((pool) => pool[prefilter] >= config.thresholdUsd)
+  // A token on hold cannot produce a message, so confirming it would spend a
+  // request the API barely has — and those rejections were costing other
+  // tokens their alerts.
+  const crossing = watched.filter((pool) => pool[prefilter] >= config.thresholdUsd);
+  const held = crossing.filter((pool) => gate.isHeld(pool));
+  const candidates = crossing
+    .filter((pool) => !gate.isHeld(pool))
     .sort((a, b) => b[prefilter] - a[prefilter])
     .slice(0, config.maxCandidates);
 
   console.log(
     `[${new Date().toISOString()}] trending=${trending} pages=${pages.join(',')} ` +
       `pools=${pools.length} skipped=${skipped.length}${skipped.length ? `(${[...new Set(skipped)].join(',')})` : ''} ` +
-      `candidates=${candidates.length}`,
+      `candidates=${candidates.length} held=${held.length}`,
   );
+
+  const trace = process.env.DEBUG_TOKEN?.toLowerCase();
+  if (trace) {
+    const seen = pools.filter(
+      (p) => p.baseAddress?.toLowerCase() === trace || p.address?.toLowerCase() === trace,
+    );
+    console.log(
+      seen.length === 0
+        ? `trace ${trace}: not in this scan`
+        : seen
+            .map((p) => `trace ${p.baseSymbol ?? p.name}: 5m=${Math.round(p.volume5m)} 24h=${Math.round(p.volume24h)}`)
+            .join(' | '),
+    );
+  }
 
   for (const pool of candidates) {
     let candles;

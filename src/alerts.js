@@ -15,6 +15,12 @@ export function createAlertGate({ cooldownMs, now = () => Date.now() }) {
   }
 
   return {
+    /** Lets a caller drop a token before paying for its confirmation request. */
+    isHeld(pool) {
+      const previous = lastAlertAt.get(tokenKey(pool));
+      return previous !== undefined && now() - previous < cooldownMs;
+    },
+
     allow(pool, candle) {
       const candleKey = `${pool.address}:${candle.timestamp}`;
       if (seenCandles.has(candleKey)) return false;
