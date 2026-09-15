@@ -13,7 +13,12 @@ async function runCycle(config, scanner, gate) {
   // A candle of `windowMinutes` that crossed the threshold is always contained in
   // the wider rolling window below, so filtering on it cannot drop a real hit.
   const prefilter = config.windowMinutes <= 5 ? 'volume5m' : 'volume1h';
-  const watched = pools.filter((pool) => !isBlacklisted(pool, config.blacklist));
+  const watched = [];
+  const skipped = [];
+  for (const pool of pools) {
+    if (isBlacklisted(pool, config.blacklist)) skipped.push(pool.baseSymbol ?? pool.name);
+    else watched.push(pool);
+  }
   const candidates = watched
     .filter((pool) => pool[prefilter] >= config.thresholdUsd)
     .sort((a, b) => b[prefilter] - a[prefilter])
@@ -21,7 +26,7 @@ async function runCycle(config, scanner, gate) {
 
   console.log(
     `[${new Date().toISOString()}] trending=${trending} pages=${pages.join(',')} ` +
-      `pools=${pools.length} skipped=${pools.length - watched.length} ` +
+      `pools=${pools.length} skipped=${skipped.length}${skipped.length ? `(${[...new Set(skipped)].join(',')})` : ''} ` +
       `candidates=${candidates.length}`,
   );
 
