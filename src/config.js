@@ -35,7 +35,10 @@ export function loadConfig() {
     hotPages: num('HOT_PAGES', 1),
     rotatingPages: num('ROTATING_PAGES', 1),
     useTrending: process.env.USE_TRENDING !== '0',
-    maxCandidates: num('MAX_CANDIDATES_PER_CYCLE', 10),
+    // Each candidate costs a confirmation request, and the API tolerates only a
+    // few per minute; the rest are picked up next cycle, while the 5m evidence
+    // still stands.
+    maxCandidates: num('MAX_CANDIDATES_PER_CYCLE', 2),
     blacklist: parseBlacklist(process.env.BLACKLIST),
   };
 }
