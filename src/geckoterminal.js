@@ -30,70 +30,47 @@ function tokenSymbols(included) {
  * A pool that traded the threshold within one minute necessarily shows at least
  * that much in its 5m window, so this list can never miss a candidate.
  */
-export async function fetchPools(network, maxPages, thresholdUsd) {
-  const pools = [];
-  const seen = new Set();
+export async function fetchPoolPage(network, page) {
+  // Without the include the response carries no token objects, leaving every
+  // alert without a symbol or contract address.
+  const body = await get(
+    `/networks/${network}/pools?page=${page}&sort=h24_volume_usd_desc&include=base_token,quote_token`,
+    { retries: 0 },
+  );
 
-  for (let page = 1; page <= maxPages; page++) {
-    if (page > 1) await sleep(1500);
+  const items = body?.data ?? [];
+  const tokens = tokenSymbols(body.included);
 
-    // Without the include the response carries no token objects, leaving every
-    // alert without a symbol or contract address.
-    const body = await get(
-      `/networks/${network}/pools?page=${page}&sort=h24_volume_usd_desc&include=base_token,quote_token`,
-    );
-    const items = body?.data ?? [];
-    if (items.length === 0) break;
+  const pools = items.map((item) => {
+    const a = item?.attributes ?? {};
+    const baseId = item?.relationships?.base_token?.data?.id;
+    const quoteId = item?.relationships?.quote_token?.data?.id;
 
-    const tokens = tokenSymbols(body.included);
+    return {
+      address: a.address,
+      name: a.name,
+      baseSymbol: tokens.get(baseId)?.symbol ?? null,
+      baseAddress: tokens.get(baseId)?.address ?? null,
+      quoteSymbol: tokens.get(quoteId)?.symbol ?? null,
+      priceUsd: Number(a.base_token_price_usd) || null,
+      liquidityUsd: Number(a.reserve_in_usd) || 0,
+      volume5m: Number(a.volume_usd?.m5) || 0,
+      volume1h: Number(a.volume_usd?.h1) || 0,
+      volume24h: Number(a.volume_usd?.h24) || 0,
+    };
+  });
 
-    for (const item of items) {
-      const a = item?.attributes ?? {};
-      const baseId = item?.relationships?.base_token?.data?.id;
-      const quoteId = item?.relationships?.quote_token?.data?.id;
+  const volumes = pools.map((p) => p.volume24h);
+  // Pools shift between page requests as volumes update, so order only holds
+  // within a page — checking it across pages produced false negatives.
+  const sorted = volumes.every((v, i) => i === 0 || v <= volumes[i - 1]);
 
-      if (!a.address || seen.has(a.address)) continue;
-      seen.add(a.address);
-
-      const volume24h = Number(a.volume_usd?.h24) || 0;
-
-      pools.push({
-        address: a.address,
-        name: a.name,
-        baseSymbol: tokens.get(baseId)?.symbol ?? null,
-        baseAddress: tokens.get(baseId)?.address ?? null,
-        quoteSymbol: tokens.get(quoteId)?.symbol ?? null,
-        priceUsd: Number(a.base_token_price_usd) || null,
-        liquidityUsd: Number(a.reserve_in_usd) || 0,
-        volume5m: Number(a.volume_usd?.m5) || 0,
-        volume1h: Number(a.volume_usd?.h1) || 0,
-        volume24h,
-      });
-    }
-
-    const volumes = items.map((i) => Number(i?.attributes?.volume_usd?.h24) || 0);
-    // Pools shift between page requests as volumes update, so order only holds
-    // within a page — checking it across pages produced false negatives.
-    const sorted = volumes.every((v, i) => i === 0 || v <= volumes[i - 1]);
-
-    if (process.env.DEBUG_SCAN === '1') {
-      console.log(
-        `scan page=${page} items=${items.length} first=${Math.round(volumes[0])} ` +
-          `last=${Math.round(volumes.at(-1))} sorted=${sorted}`,
-      );
-    }
-
-    // A window that trades the threshold sits inside the last 24h, so a pool
-    // below it in 24h volume cannot hold one, and on a descending page every
-    // pool after this one is lower still.
-    if (sorted && volumes.at(-1) < thresholdUsd) break;
-
-    // links.next is not always present, and trusting it truncated the scan to
-    // the first page. A short page is the reliable end-of-list signal.
-    if (items.length < PAGE_SIZE) break;
-  }
-
-  return pools;
+  return {
+    pools: pools.filter((p) => p.address),
+    sorted,
+    lastVolume24h: volumes.at(-1) ?? 0,
+    isLastPage: items.length < PAGE_SIZE,
+  };
 }
 
 /**

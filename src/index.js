@@ -1,7 +1,8 @@
 import { loadConfig } from './config.js';
-import { fetchPools, fetchCandles } from './geckoterminal.js';
+import { fetchCandles } from './geckoterminal.js';
 import { sendMessage, formatAlert } from './telegram.js';
 import { isBlacklisted } from './blacklist.js';
+import { createScanner } from './scanner.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -14,8 +15,8 @@ function remember(key) {
   }
 }
 
-async function runCycle(config) {
-  const pools = await fetchPools(config.network, config.maxPoolPages, config.thresholdUsd);
+async function runCycle(config, scanner) {
+  const { pools, pages } = await scanner.scan();
 
   // A candle of `windowMinutes` that crossed the threshold is always contained in
   // the wider rolling window below, so filtering on it cannot drop a real hit.
@@ -27,8 +28,8 @@ async function runCycle(config) {
     .slice(0, config.maxCandidates);
 
   console.log(
-    `[${new Date().toISOString()}] pools=${pools.length} skipped=${pools.length - watched.length} ` +
-      `candidates=${candidates.length}`,
+    `[${new Date().toISOString()}] pages=${pages.join(',')} pools=${pools.length} ` +
+      `skipped=${pools.length - watched.length} candidates=${candidates.length}`,
   );
 
   for (const pool of candidates) {
@@ -64,10 +65,25 @@ async function runCycle(config) {
 async function main() {
   const config = loadConfig();
 
+  const scanner = createScanner({
+    network: config.network,
+    hotPages: config.hotPages,
+    rotatingPages: config.rotatingPages,
+    maxPages: config.maxPoolPages,
+    thresholdUsd: config.thresholdUsd,
+  });
+
+  const coverageSeconds = scanner.coverageCycles() * config.pollIntervalSeconds;
   console.log(
     `watching ${config.network}: >= $${config.thresholdUsd} per ${config.windowMinutes}m window, ` +
-      `polling every ${config.pollIntervalSeconds}s`,
+      `polling every ${config.pollIntervalSeconds}s, every page revisited within ${coverageSeconds}s`,
   );
+
+  // The 5m volume is what makes a spike detectable, so a page left unscanned
+  // for longer than that can hide one.
+  if (coverageSeconds > 300) {
+    console.warn(`WARNING: full coverage takes ${coverageSeconds}s, longer than the 300s window`);
+  }
 
   await sendMessage(
     config.botToken,
@@ -77,7 +93,7 @@ async function main() {
 
   for (;;) {
     try {
-      await runCycle(config);
+      await runCycle(config, scanner);
     } catch (error) {
       console.error('cycle failed:', error.message);
     }

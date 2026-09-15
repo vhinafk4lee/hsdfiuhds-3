@@ -27,9 +27,12 @@ export function loadConfig() {
     thresholdUsd: num('VOLUME_THRESHOLD_USD', 300000),
     windowMinutes,
     pollIntervalSeconds: num('POLL_INTERVAL_SECONDS', 60),
-    // 20 pools per page. The public API tolerates roughly ten requests a
-    // minute, so this leaves room to confirm candidates in the same cycle.
+    // 20 pools per page. The public API only tolerates a handful of requests a
+    // minute from a cloud IP, so a cycle scans the hot pages plus a rotating
+    // slice of the rest rather than all of them.
     maxPoolPages: num('MAX_POOL_PAGES', 8),
+    hotPages: num('HOT_PAGES', 2),
+    rotatingPages: num('ROTATING_PAGES', 2),
     maxCandidates: num('MAX_CANDIDATES_PER_CYCLE', 10),
     blacklist: parseBlacklist(process.env.BLACKLIST),
   };
