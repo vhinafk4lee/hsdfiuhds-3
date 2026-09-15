@@ -32,7 +32,15 @@ async function runCycle(config) {
   );
 
   for (const pool of candidates) {
-    const candles = await fetchCandles(config.network, pool.address, config.windowMinutes, 3);
+    let candles;
+    try {
+      candles = await fetchCandles(config.network, pool.address, config.windowMinutes, 3);
+    } catch (error) {
+      // The spike stays in the 5m window for several cycles, so a failed
+      // confirmation here is retried rather than lost.
+      console.error(`confirm ${pool.baseSymbol ?? pool.address} failed: ${error.message}`);
+      continue;
+    }
 
     for (const candle of candles) {
       if (candle.volumeUsd < config.thresholdUsd) continue;

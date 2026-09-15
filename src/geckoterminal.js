@@ -33,8 +33,6 @@ function tokenSymbols(included) {
 export async function fetchPools(network, maxPages, thresholdUsd) {
   const pools = [];
   const seen = new Set();
-  let descending = true;
-  let previous = Infinity;
 
   for (let page = 1; page <= maxPages; page++) {
     if (page > 1) await sleep(1500);
@@ -58,8 +56,6 @@ export async function fetchPools(network, maxPages, thresholdUsd) {
       seen.add(a.address);
 
       const volume24h = Number(a.volume_usd?.h24) || 0;
-      if (volume24h > previous) descending = false;
-      previous = volume24h;
 
       pools.push({
         address: a.address,
@@ -75,19 +71,22 @@ export async function fetchPools(network, maxPages, thresholdUsd) {
       });
     }
 
+    const volumes = items.map((i) => Number(i?.attributes?.volume_usd?.h24) || 0);
+    // Pools shift between page requests as volumes update, so order only holds
+    // within a page — checking it across pages produced false negatives.
+    const sorted = volumes.every((v, i) => i === 0 || v <= volumes[i - 1]);
+
     if (process.env.DEBUG_SCAN === '1') {
-      const v = items.map((i) => Number(i?.attributes?.volume_usd?.h24) || 0);
       console.log(
-        `scan page=${page} items=${items.length} first=${Math.round(v[0])} ` +
-          `last=${Math.round(v.at(-1))} descending=${descending}`,
+        `scan page=${page} items=${items.length} first=${Math.round(volumes[0])} ` +
+          `last=${Math.round(volumes.at(-1))} sorted=${sorted}`,
       );
     }
 
     // A window that trades the threshold sits inside the last 24h, so a pool
-    // below it in 24h volume cannot hold one. Sorted descending, everything
-    // after this point is below it too — but only stop if the data really came
-    // back in that order, otherwise keep paging rather than trust the sort.
-    if (descending && previous < thresholdUsd) break;
+    // below it in 24h volume cannot hold one, and on a descending page every
+    // pool after this one is lower still.
+    if (sorted && volumes.at(-1) < thresholdUsd) break;
 
     // links.next is not always present, and trusting it truncated the scan to
     // the first page. A short page is the reliable end-of-list signal.
