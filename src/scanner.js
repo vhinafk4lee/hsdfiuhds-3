@@ -16,10 +16,12 @@ export function createScanner({
   maxPages,
   thresholdUsd,
   useTrending = true,
+  cooldownCycles = 5,
   pageDelayMs = 1500,
 }) {
   let cursor = 0;
   let lastKnownPage = maxPages;
+  let cooldown = 0;
 
   function tailPages() {
     const tail = [];
@@ -63,23 +65,37 @@ export function createScanner({
         }
       }
 
-      for (const page of pagesForCycle()) {
-        if (scanned.length > 0 || trending > 0) await sleep(pageDelayMs);
+      // The API throttles harder the more it is pushed, so back off the paged
+      // scan for a while after a rejection and keep running on trending alone.
+      if (cooldown > 0) {
+        cooldown--;
+      } else {
+        for (const page of pagesForCycle()) {
+          if (scanned.length > 0 || trending > 0) await sleep(pageDelayMs);
 
-        const { pools: pagePools, sorted, lastVolume24h } = await fetchPoolPage(network, page);
-        scanned.push(page);
+          let result;
+          try {
+            result = await fetchPoolPage(network, page);
+          } catch (error) {
+            console.error(`page ${page} failed: ${error.message}`);
+            if (error.message.includes('429')) cooldown = cooldownCycles;
+            break;
+          }
 
-        if (pagePools.length === 0) {
-          lastKnownPage = Math.max(hotPages, page - 1);
-          break;
+          scanned.push(page);
+
+          if (result.pools.length === 0) {
+            lastKnownPage = Math.max(hotPages, page - 1);
+            break;
+          }
+
+          pools.push(...result.pools);
+
+          // A window that trades the threshold sits inside the last 24h, so a
+          // pool below it in 24h volume cannot hold one; on a descending page
+          // every pool after this one is lower still.
+          if (result.sorted && result.lastVolume24h < thresholdUsd) break;
         }
-
-        pools.push(...pagePools);
-
-        // A window that trades the threshold sits inside the last 24h, so a
-        // pool below it in 24h volume cannot hold one; on a descending page
-        // every pool after this one is lower still.
-        if (sorted && lastVolume24h < thresholdUsd) break;
       }
 
       const unique = new Map();
