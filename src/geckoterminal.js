@@ -25,23 +25,10 @@ function tokenSymbols(included) {
   return byId;
 }
 
-/**
- * Stage 1 of the funnel: every pool on the network with its rolling 5m volume.
- * A pool that traded the threshold within one minute necessarily shows at least
- * that much in its 5m window, so this list can never miss a candidate.
- */
-export async function fetchPoolPage(network, page) {
-  // Without the include the response carries no token objects, leaving every
-  // alert without a symbol or contract address.
-  const body = await get(
-    `/networks/${network}/pools?page=${page}&sort=h24_volume_usd_desc&include=base_token,quote_token`,
-    { retries: 0 },
-  );
+function parsePools(body) {
+  const tokens = tokenSymbols(body?.included);
 
-  const items = body?.data ?? [];
-  const tokens = tokenSymbols(body.included);
-
-  const pools = items.map((item) => {
+  return (body?.data ?? []).map((item) => {
     const a = item?.attributes ?? {};
     const baseId = item?.relationships?.base_token?.data?.id;
     const quoteId = item?.relationships?.quote_token?.data?.id;
@@ -59,7 +46,37 @@ export async function fetchPoolPage(network, page) {
       volume24h: Number(a.volume_usd?.h24) || 0,
     };
   });
+}
 
+/**
+ * Pools moving right now, ranked over a short window rather than by 24h volume.
+ * This is where a fresh token spikes: it can be trading hard this minute while
+ * sitting far down the 24h ranking, out of reach of the paged scan.
+ */
+export async function fetchTrendingPools(network, duration = '5m') {
+  const body = await get(
+    `/networks/${network}/trending_pools?duration=${duration}&include=base_token,quote_token`,
+    { retries: 0 },
+  );
+
+  return parsePools(body).filter((p) => p.address);
+}
+
+/**
+ * Stage 1 of the funnel: pools with their rolling 5m volume. A pool that traded
+ * the threshold within one minute necessarily shows at least that much in its
+ * 5m window, so this list can never miss a candidate among the pools it covers.
+ */
+export async function fetchPoolPage(network, page) {
+  // Without the include the response carries no token objects, leaving every
+  // alert without a symbol or contract address.
+  const body = await get(
+    `/networks/${network}/pools?page=${page}&sort=h24_volume_usd_desc&include=base_token,quote_token`,
+    { retries: 0 },
+  );
+
+  const pools = parsePools(body);
+  const items = body?.data ?? [];
   const volumes = pools.map((p) => p.volume24h);
   // Pools shift between page requests as volumes update, so order only holds
   // within a page — checking it across pages produced false negatives.

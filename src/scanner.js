@@ -1,4 +1,4 @@
-import { fetchPoolPage } from './geckoterminal.js';
+import { fetchPoolPage, fetchTrendingPools } from './geckoterminal.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -15,6 +15,7 @@ export function createScanner({
   rotatingPages,
   maxPages,
   thresholdUsd,
+  useTrending = true,
   pageDelayMs = 1500,
 }) {
   let cursor = 0;
@@ -50,9 +51,20 @@ export function createScanner({
     async scan() {
       const pools = [];
       const scanned = [];
+      let trending = 0;
+
+      if (useTrending) {
+        try {
+          const hot = await fetchTrendingPools(network);
+          pools.push(...hot);
+          trending = hot.length;
+        } catch (error) {
+          console.error(`trending failed: ${error.message}`);
+        }
+      }
 
       for (const page of pagesForCycle()) {
-        if (scanned.length > 0) await sleep(pageDelayMs);
+        if (scanned.length > 0 || trending > 0) await sleep(pageDelayMs);
 
         const { pools: pagePools, sorted, lastVolume24h } = await fetchPoolPage(network, page);
         scanned.push(page);
@@ -70,7 +82,10 @@ export function createScanner({
         if (sorted && lastVolume24h < thresholdUsd) break;
       }
 
-      return { pools, pages: scanned };
+      const unique = new Map();
+      for (const pool of pools) if (!unique.has(pool.address)) unique.set(pool.address, pool);
+
+      return { pools: [...unique.values()], pages: scanned, trending };
     },
   };
 }

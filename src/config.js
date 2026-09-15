@@ -33,6 +33,7 @@ export function loadConfig() {
     maxPoolPages: num('MAX_POOL_PAGES', 8),
     hotPages: num('HOT_PAGES', 2),
     rotatingPages: num('ROTATING_PAGES', 2),
+    useTrending: process.env.USE_TRENDING !== '0',
     maxCandidates: num('MAX_CANDIDATES_PER_CYCLE', 10),
     blacklist: parseBlacklist(process.env.BLACKLIST),
   };

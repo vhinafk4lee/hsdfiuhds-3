@@ -16,7 +16,7 @@ function remember(key) {
 }
 
 async function runCycle(config, scanner) {
-  const { pools, pages } = await scanner.scan();
+  const { pools, pages, trending } = await scanner.scan();
 
   // A candle of `windowMinutes` that crossed the threshold is always contained in
   // the wider rolling window below, so filtering on it cannot drop a real hit.
@@ -28,8 +28,9 @@ async function runCycle(config, scanner) {
     .slice(0, config.maxCandidates);
 
   console.log(
-    `[${new Date().toISOString()}] pages=${pages.join(',')} pools=${pools.length} ` +
-      `skipped=${pools.length - watched.length} candidates=${candidates.length}`,
+    `[${new Date().toISOString()}] trending=${trending} pages=${pages.join(',')} ` +
+      `pools=${pools.length} skipped=${pools.length - watched.length} ` +
+      `candidates=${candidates.length}`,
   );
 
   for (const pool of candidates) {
@@ -71,6 +72,7 @@ async function main() {
     rotatingPages: config.rotatingPages,
     maxPages: config.maxPoolPages,
     thresholdUsd: config.thresholdUsd,
+    useTrending: config.useTrending,
   });
 
   const coverageSeconds = scanner.coverageCycles() * config.pollIntervalSeconds;
