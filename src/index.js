@@ -3,19 +3,11 @@ import { fetchCandles } from './geckoterminal.js';
 import { sendMessage, formatAlert } from './telegram.js';
 import { isBlacklisted } from './blacklist.js';
 import { createScanner } from './scanner.js';
+import { createAlertGate } from './alerts.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const alerted = new Set();
-
-function remember(key) {
-  alerted.add(key);
-  if (alerted.size > 5000) {
-    for (const old of [...alerted].slice(0, 1000)) alerted.delete(old);
-  }
-}
-
-async function runCycle(config, scanner) {
+async function runCycle(config, scanner, gate) {
   const { pools, pages, trending } = await scanner.scan();
 
   // A candle of `windowMinutes` that crossed the threshold is always contained in
@@ -47,15 +39,13 @@ async function runCycle(config, scanner) {
     for (const candle of candles) {
       if (candle.volumeUsd < config.thresholdUsd) continue;
 
-      const key = `${pool.address}:${candle.timestamp}`;
-      if (alerted.has(key)) continue;
+      if (!gate.allow(pool, candle)) continue;
 
       await sendMessage(
         config.botToken,
         config.chatId,
         formatAlert({ pool, candle, windowMinutes: config.windowMinutes, network: config.network }),
       );
-      remember(key);
       console.log(`alert ${pool.baseSymbol ?? pool.address} ${candle.volumeUsd}`);
     }
 
@@ -74,6 +64,8 @@ async function main() {
     thresholdUsd: config.thresholdUsd,
     useTrending: config.useTrending,
   });
+
+  const gate = createAlertGate({ cooldownMs: config.alertCooldownMinutes * 60_000 });
 
   const coverageSeconds = scanner.coverageCycles() * config.pollIntervalSeconds;
   console.log(
@@ -95,7 +87,7 @@ async function main() {
 
   for (;;) {
     try {
-      await runCycle(config, scanner);
+      await runCycle(config, scanner, gate);
     } catch (error) {
       console.error('cycle failed:', error.message);
     }
