@@ -1,3 +1,5 @@
+import { parseBlacklist } from './blacklist.js';
+
 function num(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -27,5 +29,6 @@ export function loadConfig() {
     pollIntervalSeconds: num('POLL_INTERVAL_SECONDS', 60),
     maxPoolPages: num('MAX_POOL_PAGES', 10),
     maxCandidates: num('MAX_CANDIDATES_PER_CYCLE', 10),
+    blacklist: parseBlacklist(process.env.BLACKLIST),
   };
 }

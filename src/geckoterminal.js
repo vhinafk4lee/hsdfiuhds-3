@@ -26,7 +26,9 @@ export async function fetchPools(network, maxPages) {
   const seen = new Set();
 
   for (let page = 1; page <= maxPages; page++) {
-    const body = await get(`/networks/${network}/pools?page=${page}`);
+    // Without the include the response carries no token objects, leaving every
+    // alert without a symbol or contract address.
+    const body = await get(`/networks/${network}/pools?page=${page}&include=base_token,quote_token`);
     const items = body?.data ?? [];
     if (items.length === 0) break;
 

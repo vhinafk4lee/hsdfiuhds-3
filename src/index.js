@@ -1,6 +1,7 @@
 import { loadConfig } from './config.js';
 import { fetchPools, fetchCandles } from './geckoterminal.js';
 import { sendMessage, formatAlert } from './telegram.js';
+import { isBlacklisted } from './blacklist.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -19,13 +20,15 @@ async function runCycle(config) {
   // A candle of `windowMinutes` that crossed the threshold is always contained in
   // the wider rolling window below, so filtering on it cannot drop a real hit.
   const prefilter = config.windowMinutes <= 5 ? 'volume5m' : 'volume1h';
-  const candidates = pools
+  const watched = pools.filter((pool) => !isBlacklisted(pool, config.blacklist));
+  const candidates = watched
     .filter((pool) => pool[prefilter] >= config.thresholdUsd)
     .sort((a, b) => b[prefilter] - a[prefilter])
     .slice(0, config.maxCandidates);
 
   console.log(
-    `[${new Date().toISOString()}] pools=${pools.length} candidates=${candidates.length}`,
+    `[${new Date().toISOString()}] pools=${pools.length} skipped=${pools.length - watched.length} ` +
+      `candidates=${candidates.length}`,
   );
 
   for (const pool of candidates) {
