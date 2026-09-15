@@ -75,6 +75,14 @@ export async function fetchPools(network, maxPages, thresholdUsd) {
       });
     }
 
+    if (process.env.DEBUG_SCAN === '1') {
+      const v = items.map((i) => Number(i?.attributes?.volume_usd?.h24) || 0);
+      console.log(
+        `scan page=${page} items=${items.length} first=${Math.round(v[0])} ` +
+          `last=${Math.round(v.at(-1))} descending=${descending}`,
+      );
+    }
+
     // A window that trades the threshold sits inside the last 24h, so a pool
     // below it in 24h volume cannot hold one. Sorted descending, everything
     // after this point is below it too — but only stop if the data really came
