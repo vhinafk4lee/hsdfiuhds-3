@@ -32,15 +32,15 @@ export function formatAlert({ pool, candle, windowMinutes, network }) {
   const chartUrl = `https://www.geckoterminal.com/${network}/pools/${pool.address}`;
 
   return [
-    `🚨 <b>${symbol}</b> — ${usd.format(candle.volumeUsd)} за ${windowMinutes} мин`,
+    `🚨 <b>${symbol}</b> — ${usd.format(candle.volumeUsd)} in ${windowMinutes} min`,
     '',
-    `Пара: ${escapeHtml(pool.name ?? '')}`,
-    `Цена: ${price}`,
-    `Ликвидность: ${usd.format(pool.liquidityUsd)}`,
-    `Объём 24ч: ${usd.format(pool.volume24h)}`,
-    pool.baseAddress ? `Контракт: <code>${escapeHtml(pool.baseAddress)}</code>` : null,
+    `Pair: ${escapeHtml(pool.name ?? '')}`,
+    `Price: ${price}`,
+    `Liquidity: ${usd.format(pool.liquidityUsd)}`,
+    `24h volume: ${usd.format(pool.volume24h)}`,
+    pool.baseAddress ? `Contract: <code>${escapeHtml(pool.baseAddress)}</code>` : null,
     '',
-    `<a href="${chartUrl}">График</a>`,
+    `<a href="${chartUrl}">Chart</a>`,
   ]
     .filter((line) => line !== null)
     .join('\n');

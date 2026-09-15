@@ -82,7 +82,7 @@ async function main() {
   await sendMessage(
     config.botToken,
     config.chatId,
-    `✅ Бот запущен. Слежу за сетью <b>${config.network}</b>: алерт при объёме от $${config.thresholdUsd.toLocaleString('en-US')} за ${config.windowMinutes} мин.`,
+    `✅ Bot started. Watching <b>${config.network}</b>: alerting on $${config.thresholdUsd.toLocaleString('en-US')}+ volume in ${config.windowMinutes} min.`,
   );
 
   for (;;) {

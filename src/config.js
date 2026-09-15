@@ -25,7 +25,7 @@ export function loadConfig() {
     chatId,
     network: process.env.NETWORK || 'robinhood',
     thresholdUsd: num('VOLUME_THRESHOLD_USD', 200000),
-    alertCooldownMinutes: num('ALERT_COOLDOWN_MINUTES', 5),
+    alertCooldownMinutes: num('ALERT_COOLDOWN_MINUTES', 30),
     windowMinutes,
     pollIntervalSeconds: num('POLL_INTERVAL_SECONDS', 60),
     // 20 pools per page. The public API throttles a cloud IP down to a couple
