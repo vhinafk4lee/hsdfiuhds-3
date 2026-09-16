@@ -130,7 +130,7 @@ async function main() {
 
   if (config.silent) {
     console.log('SILENT mode: scanning and logging only, nothing is sent to Telegram');
-  } else {
+  } else if (config.startupMessage) {
     await sendMessage(
       config.botToken,
       config.chatId,

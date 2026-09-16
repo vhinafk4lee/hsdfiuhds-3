@@ -38,6 +38,9 @@ export function loadConfig() {
     // Investigate without posting: everything runs and is logged, nothing
     // reaches Telegram.
     silent: process.env.SILENT === '1',
+    // Every redeploy restarts the process, so the startup notice is one message
+    // per deploy in the channel.
+    startupMessage: process.env.STARTUP_MESSAGE !== '0',
     // Each candidate costs a confirmation request, and the API tolerates only a
     // few per minute; the rest are picked up next cycle, while the 5m evidence
     // still stands.
