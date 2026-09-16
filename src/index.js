@@ -35,8 +35,24 @@ async function runCycle(config, scanner, gate) {
       `candidates=${candidates.length} held=${held.length}`,
   );
 
-  const trace = process.env.DEBUG_TOKEN?.toLowerCase();
-  if (trace) {
+  // Questions about a miss always arrive after the fact, so record what the
+  // scan actually saw: without this there is no way to tell later whether a
+  // token was below the threshold, blacklisted, or never in view at all.
+  const label = (pool) =>
+    `${isBlacklisted(pool, config.blacklist) ? '*' : ''}${pool.baseSymbol ?? pool.address}`;
+  console.log(
+    'top5m ' +
+      [...pools]
+        .sort((a, b) => b.volume5m - a.volume5m)
+        .slice(0, 5)
+        .map((p) => `${label(p)}=${Math.round(p.volume5m)}`)
+        .join(' '),
+  );
+
+  for (const trace of (process.env.DEBUG_TOKEN ?? '')
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean)) {
     const seen = pools.filter(
       (p) => p.baseAddress?.toLowerCase() === trace || p.address?.toLowerCase() === trace,
     );
@@ -44,7 +60,11 @@ async function runCycle(config, scanner, gate) {
       seen.length === 0
         ? `trace ${trace}: not in this scan`
         : seen
-            .map((p) => `trace ${p.baseSymbol ?? p.name}: 5m=${Math.round(p.volume5m)} 24h=${Math.round(p.volume24h)}`)
+            .map(
+              (p) =>
+                `trace ${label(p)} (${trace.slice(0, 10)}): 5m=${Math.round(p.volume5m)} ` +
+                `1h=${Math.round(p.volume1h)} 24h=${Math.round(p.volume24h)}`,
+            )
             .join(' | '),
     );
   }
@@ -64,6 +84,11 @@ async function runCycle(config, scanner, gate) {
       if (candle.volumeUsd < config.thresholdUsd) continue;
 
       if (!gate.allow(pool, candle)) continue;
+
+      if (config.silent) {
+        console.log(`WOULD ALERT ${pool.baseSymbol ?? pool.address} ${candle.volumeUsd}`);
+        continue;
+      }
 
       await sendMessage(
         config.botToken,
@@ -103,11 +128,15 @@ async function main() {
     console.warn(`WARNING: full coverage takes ${coverageSeconds}s, longer than the 300s window`);
   }
 
-  await sendMessage(
-    config.botToken,
-    config.chatId,
-    `✅ Bot started. Watching <b>${config.network}</b>: alerting on $${config.thresholdUsd.toLocaleString('en-US')}+ volume in ${config.windowMinutes} min.`,
-  );
+  if (config.silent) {
+    console.log('SILENT mode: scanning and logging only, nothing is sent to Telegram');
+  } else {
+    await sendMessage(
+      config.botToken,
+      config.chatId,
+      `✅ Bot started. Watching <b>${config.network}</b>: alerting on $${config.thresholdUsd.toLocaleString('en-US')}+ volume in ${config.windowMinutes} min.`,
+    );
+  }
 
   for (;;) {
     try {
