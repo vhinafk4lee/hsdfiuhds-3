@@ -38,7 +38,9 @@ export function formatAlert({ pool, candle, windowMinutes, network }) {
     `Price: ${price}`,
     `Liquidity: ${usd.format(pool.liquidityUsd)}`,
     `24h volume: ${usd.format(pool.volume24h)}`,
-    pool.baseAddress ? `Contract: <code>${escapeHtml(pool.baseAddress)}</code>` : null,
+    // On its own line the address is a clean tap target: tapping a <code> span
+    // copies exactly its contents, so nothing else comes along with it.
+    pool.baseAddress ? `\n<code>${escapeHtml(pool.baseAddress)}</code>` : null,
     '',
     `<a href="${chartUrl}">Chart</a>`,
   ]
