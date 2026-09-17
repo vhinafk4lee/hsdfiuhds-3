@@ -83,18 +83,33 @@ async function runCycle(config, scanner, gate) {
     for (const candle of candles) {
       if (candle.volumeUsd < config.thresholdUsd) continue;
 
-      if (!gate.allow(pool, candle)) continue;
+      if (!gate.shouldSend(pool, candle)) continue;
 
       if (config.silent) {
         console.log(`WOULD ALERT ${pool.baseSymbol ?? pool.address} ${candle.volumeUsd}`);
         continue;
       }
 
-      await sendMessage(
-        config.botToken,
-        config.chatId,
-        formatAlert({ pool, candle, windowMinutes: config.windowMinutes, network: config.network }),
-      );
+      try {
+        await sendMessage(
+          config.botToken,
+          config.chatId,
+          formatAlert({
+            pool,
+            candle,
+            windowMinutes: config.windowMinutes,
+            network: config.network,
+          }),
+        );
+      } catch (error) {
+        // Delivery can fail for reasons that have nothing to do with this pool
+        // (a renamed channel, Telegram being down), so keep the rest of the
+        // cycle running and leave the alert unrecorded for a later retry.
+        console.error(`send ${pool.baseSymbol ?? pool.address} failed: ${error.message}`);
+        continue;
+      }
+
+      gate.record(pool, candle);
       console.log(`alert ${pool.baseSymbol ?? pool.address} ${candle.volumeUsd}`);
     }
 

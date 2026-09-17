@@ -21,18 +21,18 @@ export function createAlertGate({ cooldownMs, now = () => Date.now() }) {
       return previous !== undefined && now() - previous < cooldownMs;
     },
 
-    allow(pool, candle) {
-      const candleKey = `${pool.address}:${candle.timestamp}`;
-      if (seenCandles.has(candleKey)) return false;
+    shouldSend(pool, candle) {
+      if (seenCandles.has(`${pool.address}:${candle.timestamp}`)) return false;
+      return !this.isHeld(pool);
+    },
 
+    /**
+     * Call only after the message is actually delivered: recording a send that
+     * failed would start the hold and bury the alert until the pump is over.
+     */
+    record(pool, candle) {
       const at = now();
-      const previous = lastAlertAt.get(tokenKey(pool));
-      if (previous !== undefined && at - previous < cooldownMs) {
-        seenCandles.add(candleKey);
-        return false;
-      }
-
-      seenCandles.add(candleKey);
+      seenCandles.add(`${pool.address}:${candle.timestamp}`);
       lastAlertAt.set(tokenKey(pool), at);
 
       if (seenCandles.size > 5000) {
@@ -41,8 +41,6 @@ export function createAlertGate({ cooldownMs, now = () => Date.now() }) {
       for (const [key, time] of lastAlertAt) {
         if (at - time >= cooldownMs) lastAlertAt.delete(key);
       }
-
-      return true;
     },
   };
 }
