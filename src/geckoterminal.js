@@ -39,6 +39,7 @@ function parsePools(body) {
       baseSymbol: tokens.get(baseId)?.symbol ?? null,
       baseAddress: tokens.get(baseId)?.address ?? null,
       quoteSymbol: tokens.get(quoteId)?.symbol ?? null,
+      createdAt: Number.isFinite(Date.parse(a.pool_created_at)) ? Date.parse(a.pool_created_at) : null,
       priceUsd: Number(a.base_token_price_usd) || null,
       liquidityUsd: Number(a.reserve_in_usd) || 0,
       volume5m: Number(a.volume_usd?.m5) || 0,

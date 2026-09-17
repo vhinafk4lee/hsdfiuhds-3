@@ -1,6 +1,6 @@
 import { loadConfig } from './config.js';
 import { fetchCandles } from './geckoterminal.js';
-import { sendMessage, formatAlert } from './telegram.js';
+import { sendMessage, formatAlert, formatAge } from './telegram.js';
 import { isBlacklisted } from './blacklist.js';
 import { createScanner } from './scanner.js';
 import { createAlertGate } from './alerts.js';
@@ -110,7 +110,10 @@ async function runCycle(config, scanner, gate) {
       }
 
       gate.record(pool, candle);
-      console.log(`alert ${pool.baseSymbol ?? pool.address} ${candle.volumeUsd}`);
+      console.log(
+        `alert ${pool.baseSymbol ?? pool.address} ${candle.volumeUsd} ` +
+          `age=${formatAge(pool.createdAt) ?? 'unknown'}`,
+      );
     }
 
     await sleep(300);
