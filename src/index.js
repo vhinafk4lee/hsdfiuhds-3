@@ -4,10 +4,11 @@ import { sendMessage, formatAlert, formatAge } from './telegram.js';
 import { isBlacklisted } from './blacklist.js';
 import { createScanner } from './scanner.js';
 import { createAlertGate } from './alerts.js';
+import { fetchStockTokens } from './stocktokens.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function runCycle(config, scanner, gate) {
+async function runCycle(config, scanner, gate, blacklist) {
   const { pools, pages, trending } = await scanner.scan();
 
   // A candle of `windowMinutes` that crossed the threshold is always contained in
@@ -16,7 +17,7 @@ async function runCycle(config, scanner, gate) {
   const watched = [];
   const skipped = [];
   for (const pool of pools) {
-    if (isBlacklisted(pool, config.blacklist)) skipped.push(pool.baseSymbol ?? pool.name);
+    if (isBlacklisted(pool, blacklist)) skipped.push(pool.baseSymbol ?? pool.name);
     else watched.push(pool);
   }
   // A token on hold cannot produce a message, so confirming it would spend a
@@ -39,7 +40,7 @@ async function runCycle(config, scanner, gate) {
   // scan actually saw: without this there is no way to tell later whether a
   // token was below the threshold, blacklisted, or never in view at all.
   const label = (pool) =>
-    `${isBlacklisted(pool, config.blacklist) ? '*' : ''}${pool.baseSymbol ?? pool.address}`;
+    `${isBlacklisted(pool, blacklist) ? '*' : ''}${pool.baseSymbol ?? pool.address}`;
   console.log(
     'top5m ' +
       [...pools]
@@ -156,9 +157,26 @@ async function main() {
     );
   }
 
+  let stockTokens = new Set();
+  let refreshStockTokensAt = 0;
+
   for (;;) {
+    // New stock tokens keep being issued, and a failed fetch must not leave the
+    // category unfiltered for the life of the process — so retry it, sooner
+    // after a failure than after a success.
+    if (config.excludeStockTokens && Date.now() >= refreshStockTokensAt) {
+      try {
+        stockTokens = await fetchStockTokens(config.stockRegistryUrl);
+        refreshStockTokensAt = Date.now() + 12 * 60 * 60_000;
+        console.log(`stock tokens: excluding ${stockTokens.size} entries from the registry`);
+      } catch (error) {
+        refreshStockTokensAt = Date.now() + 10 * 60_000;
+        console.error(`stock tokens: ${error.message}`);
+      }
+    }
+
     try {
-      await runCycle(config, scanner, gate);
+      await runCycle(config, scanner, gate, new Set([...config.blacklist, ...stockTokens]));
     } catch (error) {
       console.error('cycle failed:', error.message);
     }
