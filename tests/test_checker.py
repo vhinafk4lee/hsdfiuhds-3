@@ -131,6 +131,11 @@ def test_three_cases_marks(mock_api):
     s = checker.summarize(results)
     assert (s.eligible, s.total, s.claimed, s.errors) == (1, 3, 1, 1)
     assert s.total_amount == Decimal(40000)
+    assert not any(checker.CLAIM_URL in line for line in s.lines())  # всё склеймлено
+
+    unclaimed = checker.summarize([checker.CheckResult(EVM_OK, "evm", mark=checker.MARK_OK, eligible=True)])
+    assert unclaimed.to_claim == 1
+    assert f"Клейм (1 ещё не склеймлено): {checker.CLAIM_URL}" in unclaimed.lines()
 
     csv_text = checker.results_to_csv(results)
     assert csv_text.splitlines()[0] == ",".join(checker.CSV_COLUMNS)

@@ -26,6 +26,7 @@ load_dotenv()
 API_BASE = os.getenv("API_BASE", "https://airdrop.bigshort.xyz")
 AIRDROP_ID = "airdrop-20260920-v1"
 SITE_URL = "https://airdrop.bigshort.xyz/"
+CLAIM_URL = os.getenv("CLAIM_URL", "https://airdrop.bigshort.xyz/?ref=EVM-5150")
 TOKEN_SYMBOL = "SHORT"
 
 REQUEST_TIMEOUT = 30
@@ -374,13 +375,20 @@ class Summary:
     claimed: int
     claimed_amount: Decimal
 
+    @property
+    def to_claim(self) -> int:
+        return self.eligible - self.claimed
+
     def lines(self) -> list[str]:
-        return [
+        lines = [
             f"Eligible: {self.eligible}/{self.total}",
             f"Сумма {TOKEN_SYMBOL} по eligible: {fmt_amount(self.total_amount)}",
             f"Уже склеймлено: {self.claimed} ({fmt_amount(self.claimed_amount)} {TOKEN_SYMBOL})",
             f"Ошибок/непонятных: {self.errors}",
         ]
+        if self.to_claim and CLAIM_URL:
+            lines.append(f"Клейм ({self.to_claim} ещё не склеймлено): {CLAIM_URL}")
+        return lines
 
 
 def summarize(results: Iterable[CheckResult]) -> Summary:

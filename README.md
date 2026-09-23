@@ -40,6 +40,7 @@ cp .env.example .env      # Windows: copy .env.example .env
 | `DELAY` | `0.3` | пауза (сек) после каждого запроса в каждом потоке |
 | `BOT_TOKEN` | — | токен бота от @BotFather (только для `--bot`) |
 | `HTTPS_PROXY` | — | прокси, например `http://127.0.0.1:10809` |
+| `CLAIM_URL` | `https://airdrop.bigshort.xyz/?ref=EVM-5150` | ссылка на клейм в итоге (если есть eligible, ещё не склеймленные); пустое значение — не показывать |
 
 Прокси из `HTTPS_PROXY` используется и для запросов к API (через `trust_env=True`), и для Telegram.
 Если получаете много ⚠️ `HTTP 429`, уменьшите `CONCURRENCY` и/или увеличьте `DELAY`.
