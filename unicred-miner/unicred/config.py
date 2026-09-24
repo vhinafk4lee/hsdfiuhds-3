@@ -11,6 +11,7 @@ DEFAULTS = {
     "servers_file": "servers.txt",
     "ssh_key": "",
     "ssh_password": "",
+    "ssh_key_passphrase": "",
     "remote_dir": "unicred",
     "priority_fee_gwei": 0.05,
     "max_fee_gwei": 2.0,
@@ -71,7 +72,7 @@ class Config(dict):
 
     def public_view(self):
         """Config for display: no secrets."""
-        hidden = {"ssh_password"}
+        hidden = {"ssh_password", "ssh_key_passphrase"}
         return {k: ("***" if k in hidden and v else v)
                 for k, v in self.items() if not k.startswith("_")}
 

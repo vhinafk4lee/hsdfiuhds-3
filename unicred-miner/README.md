@@ -98,7 +98,7 @@ copy servers.example.txt servers.txt
 | `private_key_file` | `wallet.key` | файл с ключом |
 | `address` | `""` | адрес кошелька. Нужен только для `run --dry-run` без ключа |
 | `servers_file` | `servers.txt` | список серверов |
-| `ssh_key` | `""` | путь к SSH-ключу. Пусто = искать в `~/.ssh` и ssh-agent |
+| `ssh_key` | `""` | путь к SSH-ключу. Пусто = искать в `~/.ssh` и ssh-agent. Если ключ защищён паролем, программа спросит его при запуске |
 | `priority_fee_gwei` | `0.05` | priority fee. Минт возможен один на блок, поэтому при одновременной находке побеждает тот, кто платит больше |
 | `max_fee_gwei` | `2.0` | потолок maxFeePerGas |
 | `gas_limit` | `350000` | лимит газа (минт тратит около 200k) |

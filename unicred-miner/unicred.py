@@ -19,7 +19,7 @@ from unicred.chain import Chain
 from unicred.config import ETH, load_config
 from unicred.dashboard import enable_ansi, fmt_hr, run_dashboard, run_plain
 from unicred.servers import (WORKER_FILES, LocalTransport, ensure_python, load_servers,
-                             make_transport, run_worker_once)
+                             make_transport, prepare_ssh_passphrase, run_worker_once)
 
 OK = "\x1b[32mOK\x1b[0m"
 FAIL = "\x1b[31mFAIL\x1b[0m"
@@ -202,6 +202,7 @@ def probe_server(spec, cfg, bench_seconds, out, printer):
 def cmd_servers(cfg, args):
     enable_ansi()
     specs = load_servers(cfg.path("servers_file"))
+    prepare_ssh_passphrase(cfg, specs)
     if not specs:
         print("servers.txt пуст")
         return 1
@@ -252,6 +253,7 @@ def cmd_run(cfg, args):
     if not address:
         raise SystemExit("нужен private_key_file (или address для --dry-run)")
     specs = load_servers(cfg.path("servers_file"))
+    prepare_ssh_passphrase(cfg, specs)
     chain = Chain(cfg.rpc_url, address, send_urls=cfg.send_rpc_urls)
     cid = chain.chain_id()
     if cid != P.CHAIN_ID:

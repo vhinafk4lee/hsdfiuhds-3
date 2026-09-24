@@ -48,6 +48,31 @@ class WindowsFilesTest(unittest.TestCase):
             self.assertEqual(Wallet(f).address, acct.address, name)
 
 
+class EncryptedSshKeyTest(unittest.TestCase):
+    """A passphrase-protected SSH key: the passphrase is asked once and passed to paramiko."""
+
+    def test_passphrase_prompt(self):
+        import paramiko
+        from unicred.servers import parse_server_line, prepare_ssh_passphrase
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp) / "id_test"
+            paramiko.RSAKey.generate(2048).write_private_key_file(str(key), password="s3cret")
+            cfg_path = Path(tmp) / "config.json"
+            cfg_path.write_text(json.dumps({"ssh_key": str(key)}))
+            cfg = load_config(str(cfg_path))
+            specs = [parse_server_line("ssh -p 31618 root@151.237.25.16 -L 8080:localhost:8080")]
+            answers = iter(["wrong", "s3cret"])
+            prepare_ssh_passphrase(cfg, specs, ask=lambda prompt: next(answers))
+            self.assertEqual(cfg["ssh_key_passphrase"], "s3cret")
+            self.assertEqual(cfg.public_view()["ssh_key_passphrase"], "***")
+            # unencrypted key: no prompt
+            key.unlink()
+            paramiko.RSAKey.generate(2048).write_private_key_file(str(key))
+            cfg2 = load_config(str(cfg_path))
+            prepare_ssh_passphrase(cfg2, specs, ask=lambda prompt: self.fail("asked"))
+            self.assertEqual(cfg2["ssh_key_passphrase"], "")
+
+
 class BatchFilesTest(unittest.TestCase):
     """Double-click launchers: CRLF, ASCII, run from their own folder, call existing commands."""
 

@@ -138,6 +138,7 @@ class SSHTransport(object):
         client.connect(
             self.spec.host, port=self.spec.port, username=self.spec.user,
             key_filename=key, password=self.cfg.ssh_password or None,
+            passphrase=self.cfg.get("ssh_key_passphrase") or None,
             look_for_keys=True, allow_agent=True,
             timeout=15, banner_timeout=30, auth_timeout=30)
         try:
@@ -317,6 +318,58 @@ def kill_pattern(remote_dir):
 def remote_worker_cmd(tr, cfg, args):
     return "%s -u %s %s" % (tr.remote_python(cfg.remote_dir), tr.worker_path(cfg.remote_dir),
                             " ".join(shlex.quote(a) for a in args))
+
+
+def ssh_key_files(cfg):
+    """Key files paramiko will try: ssh_key from config, else ~/.ssh/id_{rsa,ecdsa,ed25519}."""
+    if cfg.ssh_key:
+        return [cfg.path("ssh_key")]
+    home = Path(os.path.expanduser("~"))
+    return [home / d / ("id_" + n) for d in (".ssh", "ssh") for n in ("rsa", "ecdsa", "ed25519")
+            if (home / d / ("id_" + n)).is_file()]
+
+
+def _load_key(path, password=None):
+    import paramiko
+    last = None
+    for cls in (paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey):
+        try:
+            return cls.from_private_key_file(str(path), password=password)
+        except paramiko.PasswordRequiredException:
+            raise
+        except Exception as exc:
+            last = exc
+    raise last or ValueError("unknown key")
+
+
+def prepare_ssh_passphrase(cfg, specs, ask=None):
+    """If an SSH key is protected by a passphrase, ask for it once (never stored on disk)."""
+    import paramiko
+    if cfg.get("ssh_key_passphrase") or not any(not s.local for s in specs):
+        return
+    files = [Path(s.key_file) for s in specs if s.key_file] + ssh_key_files(cfg)
+    encrypted = []
+    for f in files:
+        try:
+            _load_key(f)
+        except paramiko.PasswordRequiredException:
+            encrypted.append(f)
+        except Exception:
+            pass
+    if not encrypted:
+        return
+    if ask is None:
+        import getpass
+        ask = getpass.getpass
+    for attempt in range(3):
+        pw = ask("SSH-ключ %s защищён паролем. Введите пароль (символы не отображаются): " % encrypted[0])
+        try:
+            _load_key(encrypted[0], pw)
+            cfg["ssh_key_passphrase"] = pw
+            return
+        except Exception:
+            print("неверный пароль")
+    raise SystemExit("не удалось расшифровать SSH-ключ %s" % encrypted[0])
 
 
 def ensure_python(tr):
