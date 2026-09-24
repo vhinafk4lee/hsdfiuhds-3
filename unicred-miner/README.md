@@ -53,6 +53,19 @@ digest < target(msg.sender)    →  mint(anchorBlock, nonce, maxPrice), payable
 
 Дашборд лучше смотреть в **Windows Terminal**, он есть в Windows 11 по умолчанию. В старом `cmd.exe` тоже работает.
 
+### Самый простой путь: двойной щелчок по .bat
+
+1. Нажмите на архиве `unicred-miner.zip` правой кнопкой → **«Извлечь все…» → «Извлечь»** и откройте
+   распакованную папку `unicred-miner`, в которой лежит `unicred.py`.
+2. **`setup.bat`** ставит зависимости, создаёт `config.json` и открывает Блокнот для `servers.txt`
+   и `wallet.key`. Если эти файлы уже лежат в `C:\Users\<вы>\`, он их переносит сам. В конце запускается `check`.
+3. **`servers.bat`** проверяет серверы (selftest + bench).
+4. **`dry-run.bat`** запускает майнинг без отправки транзакций.
+5. **`run.bat`** запускает боевой режим (спросит `yes`). Остановка: Ctrl+C.
+
+Если Windows покажет «Windows защитила ваш компьютер» или «Предупреждение системы безопасности»,
+нажмите «Подробнее» → «Выполнить в любом случае» (или «Запустить»).
+
 ### SSH-ключ для vast.ai (один раз)
 
 ```powershell
@@ -278,7 +291,7 @@ python -m unittest discover -s tests -v
 5. `test_5_worker_cuda_path` — CUDA-путь воркера (ctypes Driver API) на фейковом `libcuda`, который
    исполняет ядро на CPU: selftest, bench, протокол, fallback PTX для старых драйверов.
 6. `test_6_windows_files` — `servers.txt`, `config.json`, `wallet.key`, сохранённые Блокнотом (UTF-8 с BOM)
-   или PowerShell 5.1 (`>` пишет UTF-16), читаются правильно.
+   или PowerShell 5.1 (`>` пишет UTF-16), читаются правильно; `.bat`-файлы в CRLF и вызывают нужные команды.
 
 Тестам 2, 3 и 5 нужны Linux и g++ (WSL подойдёт); на Windows они пропускаются.
 Результат прогона лежит в `TEST_RESULTS.txt`.

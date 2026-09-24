@@ -48,5 +48,22 @@ class WindowsFilesTest(unittest.TestCase):
             self.assertEqual(Wallet(f).address, acct.address, name)
 
 
+class BatchFilesTest(unittest.TestCase):
+    """Double-click launchers: CRLF, ASCII, run from their own folder, call existing commands."""
+
+    def test_launchers(self):
+        root = Path(__file__).resolve().parent.parent
+        expected = {"setup.bat": "unicred.py check", "check.bat": "unicred.py check",
+                    "servers.bat": "unicred.py servers", "dry-run.bat": "unicred.py run --dry-run",
+                    "run.bat": "unicred.py run\r\n"}
+        for name, cmd in expected.items():
+            data = (root / name).read_bytes()
+            data.decode("ascii")
+            self.assertNotIn(b"\n", data.replace(b"\r\n", b""), name + " must use CRLF")
+            self.assertIn(b'cd /d "%~dp0"', data, name)
+            self.assertIn(cmd.encode(), data, name)
+            self.assertIn(b":nopython", data, name)
+
+
 if __name__ == "__main__":
     unittest.main()

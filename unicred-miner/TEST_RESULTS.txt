@@ -1,4 +1,4 @@
-# UNICRED miner — test run 2026-09-24 10:00 UTC
+# UNICRED miner — test run 2026-09-24 10:05 UTC
 # Python 3.11.15, g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, Linux 6.18.44-fc-v37
 # NVRTC 11.8.89 + ptxas from nvidia-cuda-nvcc-cu12 12.9 (tools/.cache)
 # command: python -W ignore::ResourceWarning -m unittest discover -s tests -v
@@ -51,11 +51,12 @@ test_old_driver_ptx_fallback (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.t
 test_protocol_via_driver_api (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.test_protocol_via_driver_api) ... ok
 test_selftest_via_driver_api (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.test_selftest_via_driver_api) ... ok
 test_too_old_driver_fails_cleanly (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.test_too_old_driver_fails_cleanly) ... ok
+test_launchers (tests.test_6_windows_files.BatchFilesTest.test_launchers) ... ok
 test_config_json (tests.test_6_windows_files.WindowsFilesTest.test_config_json) ... ok
 test_servers_txt (tests.test_6_windows_files.WindowsFilesTest.test_servers_txt) ... ok
 test_wallet_key (tests.test_6_windows_files.WindowsFilesTest.test_wallet_key) ... ok
 
 ----------------------------------------------------------------------
-Ran 39 tests in 33.033s
+Ran 40 tests in 32.150s
 
 OK
