@@ -312,6 +312,29 @@ class CandidateLogicTest(ControllerTestBase):
         self.assertEqual(sorted(c.spec.name for c in m.conns), sorted(started))
         m.conns = []  # nothing really started
 
+    def test_traits_command(self):
+        import random as _r
+        for i in range(40):  # 40 mints with random digests
+            self.chain.minted += 1
+            d = "%064x" % _r.getrandbits(250)
+            n = self.chain.head() - 40 + i
+            self.chain.logs.append({"address": P.UNICRED.lower(), "blockNumber": hex(n), "blockHash": H(n),
+                                    "topics": [P.MINT_TOPIC, "0x%064x" % self.chain.minted, "0x" + "0" * 64],
+                                    "data": "0x" + d + "%064x%064x" % (n - 1, 4 * 10 ** 15),
+                                    "transactionHash": "0x" + "%064x" % i})
+        from unicred import traits as T
+        chain = Chain(self.url, self.acct.address)
+        rows = T.collect(chain, count=30, progress=lambda *a: None)
+        self.assertEqual(len(rows), 30)
+        for r in rows:
+            want = "Legendary" if int(r["digest"], 16) % 10 == 0 else "Common"
+            self.assertEqual(r["trait:Rarity"], want)
+        text = "\n".join(T.summary(rows))
+        self.assertIn("Common", text)
+        out = self.dir / "traits.csv"
+        T.write_csv(rows, out)
+        self.assertIn("trait:Rarity", out.read_text(encoding="utf-8-sig").splitlines()[0])
+
     def test_rpc_without_batch(self):
         srv, url = serve(self.chain, batch=False)
         try:

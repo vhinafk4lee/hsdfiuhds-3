@@ -78,6 +78,14 @@ class MockChain(object):
             return w(self.last_mint_block)
         if sel == P.SEL_DIGEST:
             return "0x" + P.digest(words[0], words[1], "0x%040x" % words[2], words[3]).hex()
+        if sel == "c87b56dd":  # tokenURI: rarity from the mint digest (test rule)
+            log = [l for l in self.logs if int(l["topics"][1], 16) == words[0]][0]
+            d = int(log["data"][2:66], 16)
+            rarity = "Legendary" if d % 10 == 0 else "Common"
+            meta = json.dumps({"name": "UNICRED #%d" % words[0],
+                               "attributes": [{"trait_type": "Rarity", "value": rarity}]})
+            uri = ("data:application/json;base64," + __import__("base64").b64encode(meta.encode()).decode()).encode()
+            return "0x" + "%064x" % 32 + "%064x" % len(uri) + uri.hex() + "00" * ((-len(uri)) % 32)
         if sel == P.SEL_MINT:
             return self.mint(words[0], words[1], words[2], sender, value, execute, block)
         raise Revert("00000000")

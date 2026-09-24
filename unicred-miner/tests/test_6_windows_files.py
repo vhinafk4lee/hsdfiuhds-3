@@ -80,7 +80,7 @@ class BatchFilesTest(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent
         expected = {"setup.bat": "unicred.py check", "check.bat": "unicred.py check",
                     "servers.bat": "unicred.py servers", "dry-run.bat": "unicred.py run --dry-run",
-                    "run.bat": "unicred.py run\r\n"}
+                    "run.bat": "unicred.py run\r\n", "traits.bat": "unicred.py traits"}
         for name, cmd in expected.items():
             data = (root / name).read_bytes()
             data.decode("ascii")

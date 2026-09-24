@@ -311,6 +311,22 @@ def cmd_run(cfg, args):
     return 0
 
 
+def cmd_traits(cfg, args):
+    enable_ansi()
+    from unicred import traits as T
+    _, address = load_identity(cfg, need_key=False)
+    chain = Chain(cfg.rpc_url, address or P.TV["miner"])
+    print("RPC: %s. Собираю последние %d минтов…" % (cfg.rpc_url, args.count))
+    rows = T.collect(chain, count=args.count)
+    out = cfg.runtime / "traits.csv"
+    T.write_csv(rows, out)
+    print()
+    for line in T.summary(rows, args.trait):
+        print(line)
+    print("\nФайл: %s  — пришлите его (или скриншот таблицы выше)." % out)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="UNICRED GPU miner controller")
     ap.add_argument("--config", default="config.json", help="путь к config.json")
@@ -318,6 +334,9 @@ def main(argv=None):
     sub.add_parser("check", help="онлайн-проверки")
     sp = sub.add_parser("servers", help="проверка серверов: nvidia-smi, selftest, bench")
     sp.add_argument("--bench-seconds", type=int, default=10)
+    tp = sub.add_parser("traits", help="трейты последних минтов + digest (runtime/traits.csv)")
+    tp.add_argument("--count", type=int, default=200)
+    tp.add_argument("--trait", default="Rarity")
     rp = sub.add_parser("run", help="майнинг")
     rp.add_argument("--dry-run", action="store_true", help="не отправлять транзакции")
     rp.add_argument("--yes", action="store_true", help="не спрашивать подтверждение")
@@ -327,7 +346,7 @@ def main(argv=None):
         ap.print_help()
         return 1
     cfg = load_config(args.config)
-    return {"check": cmd_check, "servers": cmd_servers, "run": cmd_run}[args.cmd](cfg, args)
+    return {"check": cmd_check, "servers": cmd_servers, "run": cmd_run, "traits": cmd_traits}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":
