@@ -1,0 +1,23 @@
+{
+  "rpc_url": "https://mainnet.unichain.org",
+  "send_rpc_urls": [],
+  "private_key_file": "wallet.key",
+  "address": "",
+  "servers_file": "servers.txt",
+  "ssh_key": "",
+  "priority_fee_gwei": 0.05,
+  "max_fee_gwei": 2.0,
+  "gas_limit": 350000,
+  "max_total_spend_eth": 0.05,
+  "max_price_eth": 0.006,
+  "min_balance_eth": 0.001,
+  "max_mints": 10,
+  "simulate_before_send": false,
+  "poll_interval": 0.25,
+  "anchor_refresh_blocks": 150,
+  "anchor_max_age_blocks": 240,
+  "candidate_cache_shift": 2,
+  "runtime_dir": "runtime",
+  "remote_dir": "unicred",
+  "worker_idle_timeout": 30
+}

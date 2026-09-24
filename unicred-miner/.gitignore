@@ -1,0 +1,19 @@
+# секреты — никогда не коммитить
+wallet.key
+*.key
+*.pem
+config.json
+servers.txt
+.env
+.env.*
+
+# рабочие файлы
+runtime/
+tools/.cache/
+tests/.build/
+__pycache__/
+*.pyc
+*.cubin
+.DS_Store
+.idea/
+.vscode/

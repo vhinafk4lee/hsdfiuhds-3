@@ -1,0 +1,8 @@
+# Одна строка = один сервер. Вставляйте SSH-команду из vast.ai как есть
+# (кнопка "Connect" -> "Direct ssh connect" или "Proxy ssh connect").
+# Лишние опции вроде -L 8080:localhost:8080 игнорируются.
+# Строки с # — комментарии.
+ssh -p 41234 root@ssh5.vast.ai -L 8080:localhost:8080
+ssh -p 22017 root@203.0.113.17 -L 8080:localhost:8080
+# свой ключ для конкретного сервера:
+# ssh -p 41235 root@ssh6.vast.ai -i C:\Users\me\.ssh\vast_ed25519

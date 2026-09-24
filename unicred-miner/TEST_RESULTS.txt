@@ -1,0 +1,58 @@
+# UNICRED miner — test run 2026-09-24 09:54 UTC
+# Python 3.11.15, g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, Linux 6.18.44-fc-v37
+# NVRTC 11.8.89 + ptxas from nvidia-cuda-nvcc-cu12 12.9 (tools/.cache)
+# command: python -W ignore::ResourceWarning -m unittest discover -s tests -v
+
+test_error_decoding (tests.test_1_pow.PowTest.test_error_decoding) ... ok
+test_mint_calldata (tests.test_1_pow.PowTest.test_mint_calldata) ... ok
+test_prefix_and_message_layout (tests.test_1_pow.PowTest.test_prefix_and_message_layout) ... ok
+test_pure_python_keccak_random (tests.test_1_pow.PowTest.test_pure_python_keccak_random) ... ok
+test_testvector_pycryptodome (tests.test_1_pow.PowTest.test_testvector_pycryptodome) ... ok
+test_testvector_worker_pure_python (tests.test_1_pow.PowTest.test_testvector_worker_pure_python) ... ok
+test_worker_midstate_random (tests.test_1_pow.PowTest.test_worker_midstate_random) ... ok
+test_1000_random_inputs_vs_pycryptodome (tests.test_2_kernel_cpu.KernelCpuTest.test_1000_random_inputs_vs_pycryptodome) ... ok
+test_easy_target_counts (tests.test_2_kernel_cpu.KernelCpuTest.test_easy_target_counts)
+With target = 2^256/64 about 1/64 of the counters are reported; all are real. ... ok
+test_random_search_and_filter (tests.test_2_kernel_cpu.KernelCpuTest.test_random_search_and_filter)
+Target = (min digest in the launch range) + 1 -> exactly that counter is reported. ... ok
+test_testvector_hash (tests.test_2_kernel_cpu.KernelCpuTest.test_testvector_hash) ... ok
+test_testvector_search_finds_nonce (tests.test_2_kernel_cpu.KernelCpuTest.test_testvector_search_finds_nonce) ... ok
+test_embedded_equals_kernel_ptx (tests.test_3_ptx.PtxTest.test_embedded_equals_kernel_ptx) ... ok
+test_header (tests.test_3_ptx.PtxTest.test_header) ... ok
+test_lower_isa_fallback_assembles (tests.test_3_ptx.PtxTest.test_lower_isa_fallback_assembles)
+Old drivers: the worker retries with .version 7.4 / 7.0 / 6.4. ... ok
+test_ptx_is_up_to_date (tests.test_3_ptx.PtxTest.test_ptx_is_up_to_date) ... NVRTC 11.8
+ok
+test_ptxas_no_spill (tests.test_3_ptx.PtxTest.test_ptxas_no_spill) ...   sm_52: unicred_search 95 registers, spill stores 0 B, spill loads 0 B, stack 0 B
+  sm_61: unicred_search 95 registers, spill stores 0 B, spill loads 0 B, stack 0 B
+  sm_70: unicred_search 80 registers, spill stores 0 B, spill loads 0 B, stack 0 B
+  sm_75: unicred_search 78 registers, spill stores 0 B, spill loads 0 B, stack 0 B
+  sm_80: unicred_search 78 registers, spill stores 0 B, spill loads 0 B, stack 0 B
+  sm_86: unicred_search 78 registers, spill stores 0 B, spill loads 0 B, stack 0 B
+  sm_89: unicred_search 78 registers, spill stores 0 B, spill loads 0 B, stack 0 B
+  sm_90: unicred_search 80 registers, spill stores 0 B, spill loads 0 B, stack 0 B
+ok
+test_bad_digest_is_rejected (tests.test_4_e2e.CandidateLogicTest.test_bad_digest_is_rejected) ... ok
+test_cached_candidate_submitted_when_target_grows (tests.test_4_e2e.CandidateLogicTest.test_cached_candidate_submitted_when_target_grows) ... ok
+test_new_job_on_target_growth_and_anchor_age (tests.test_4_e2e.CandidateLogicTest.test_new_job_on_target_growth_and_anchor_age) ... ok
+test_one_send_per_challenge (tests.test_4_e2e.CandidateLogicTest.test_one_send_per_challenge) ... ok
+test_price_cap_blocks (tests.test_4_e2e.CandidateLogicTest.test_price_cap_blocks) ... ok
+test_rpc_without_batch (tests.test_4_e2e.CandidateLogicTest.test_rpc_without_batch) ... ok
+test_spend_cap_blocks (tests.test_4_e2e.CandidateLogicTest.test_spend_cap_blocks) ... ok
+test_stale_candidate_is_dropped (tests.test_4_e2e.CandidateLogicTest.test_stale_candidate_is_dropped) ... ok
+test_check_command (tests.test_4_e2e.CliTest.test_check_command) ... ok
+test_run_dry_run_cli_and_ctrl_c (tests.test_4_e2e.CliTest.test_run_dry_run_cli_and_ctrl_c) ... ok
+test_dry_run_never_sends (tests.test_4_e2e.ControllerE2ETest.test_dry_run_never_sends) ... ok
+test_mints_with_signed_transactions (tests.test_4_e2e.ControllerE2ETest.test_mints_with_signed_transactions) ... ok
+test_job_found_ping_idle_eof (tests.test_4_e2e.WorkerProtocolTest.test_job_found_ping_idle_eof) ... ok
+test_selftest_cli (tests.test_4_e2e.WorkerProtocolTest.test_selftest_cli) ... ok
+test_bench (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.test_bench) ... ok
+test_old_driver_ptx_fallback (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.test_old_driver_ptx_fallback) ... ok
+test_protocol_via_driver_api (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.test_protocol_via_driver_api) ... ok
+test_selftest_via_driver_api (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.test_selftest_via_driver_api) ... ok
+test_too_old_driver_fails_cleanly (tests.test_5_worker_cuda_path.FakeCudaWorkerTest.test_too_old_driver_fails_cleanly) ... ok
+
+----------------------------------------------------------------------
+Ran 36 tests in 37.279s
+
+OK

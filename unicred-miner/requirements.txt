@@ -1,0 +1,4 @@
+eth-account>=0.8
+requests>=2.25
+paramiko>=2.11
+pycryptodome>=3.15
