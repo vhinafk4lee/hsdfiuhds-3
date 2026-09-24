@@ -292,6 +292,26 @@ class CandidateLogicTest(ControllerTestBase):
         self.assertEqual(self.chain.txs[0]["status"], "0x1")
         m.running = False
 
+    def test_servers_txt_hot_reload(self):
+        cfg = self.config()
+        m = self.make_miner(cfg)
+        self.assertEqual([c.spec.name for c in m.conns], ["local"])
+        started = []
+        import unicred.servers as S
+        orig = S.WorkerConn.start
+        S.WorkerConn.start = lambda c: started.append(c.spec.name)
+        try:
+            (self.dir / "servers.txt").write_text(
+                "ssh -p 31618 root@151.237.25.16 -L 8080:localhost:8080\n"
+                "ssh -p 40017 root@14.234.172.15 -L 8080:localhost:8080\n")
+            added, removed = m.reload_servers()
+        finally:
+            S.WorkerConn.start = orig
+        self.assertEqual(sorted(started), ["14.234.172.15:40017", "151.237.25.16:31618"])
+        self.assertEqual([c.spec.name for c in removed], ["local"])
+        self.assertEqual(sorted(c.spec.name for c in m.conns), sorted(started))
+        m.conns = []  # nothing really started
+
     def test_rpc_without_batch(self):
         srv, url = serve(self.chain, batch=False)
         try:

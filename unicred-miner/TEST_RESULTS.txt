@@ -1,4 +1,4 @@
-# UNICRED miner — test run 2026-09-24 10:13 UTC
+# UNICRED miner — test run 2026-09-24 10:22 UTC
 # Python 3.11.15, g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, Linux 6.18.44-fc-v37
 # NVRTC 11.8.89 + ptxas from nvidia-cuda-nvcc-cu12 12.9 (tools/.cache)
 # command: python -W ignore::ResourceWarning -m unittest discover -s tests -v
@@ -38,6 +38,7 @@ test_new_job_on_target_growth_and_anchor_age (tests.test_4_e2e.CandidateLogicTes
 test_one_send_per_challenge (tests.test_4_e2e.CandidateLogicTest.test_one_send_per_challenge) ... ok
 test_price_cap_blocks (tests.test_4_e2e.CandidateLogicTest.test_price_cap_blocks) ... ok
 test_rpc_without_batch (tests.test_4_e2e.CandidateLogicTest.test_rpc_without_batch) ... ok
+test_servers_txt_hot_reload (tests.test_4_e2e.CandidateLogicTest.test_servers_txt_hot_reload) ... ok
 test_spend_cap_blocks (tests.test_4_e2e.CandidateLogicTest.test_spend_cap_blocks) ... ok
 test_stale_candidate_is_dropped (tests.test_4_e2e.CandidateLogicTest.test_stale_candidate_is_dropped) ... ok
 test_check_command (tests.test_4_e2e.CliTest.test_check_command) ... ok
@@ -59,6 +60,6 @@ test_servers_txt (tests.test_6_windows_files.WindowsFilesTest.test_servers_txt) 
 test_wallet_key (tests.test_6_windows_files.WindowsFilesTest.test_wallet_key) ... ok
 
 ----------------------------------------------------------------------
-Ran 41 tests in 40.996s
+Ran 42 tests in 34.853s
 
 OK

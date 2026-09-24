@@ -137,12 +137,53 @@ class Miner(object):
             self.event("info", "незавершённые транзакции из прошлого запуска: %d" % len(self.state["pending"]))
         if not self.dry_run:
             self.tx_nonce = self.chain.tx_count(self.address, "pending")
-        for target in (self._poll_loop, self._slow_loop, self._submit_loop, self._receipt_loop):
+        for target in (self._poll_loop, self._slow_loop, self._submit_loop, self._receipt_loop,
+                       self._servers_watch_loop):
             threading.Thread(target=target, daemon=True, name=target.__name__).start()
         for c in self.conns:
             c.start()
         self.event("info", "старт: %d серверов, %s" % (
             len(self.conns), "DRY-RUN (транзакции не отправляются)" if self.dry_run else "боевой режим"))
+
+    # ------------------------------------------------------- servers.txt hot reload
+    def _servers_watch_loop(self):
+        path = self.cfg.path("servers_file")
+        try:
+            last = path.stat().st_mtime
+        except OSError:
+            last = None
+        while self.running:
+            time.sleep(3.0)
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime != last:
+                last = mtime
+                try:
+                    self.reload_servers()
+                except BaseException as exc:  # load_servers raises SystemExit on a bad line
+                    self.event("warn", "servers.txt не прочитан: %s" % exc)
+
+    def reload_servers(self):
+        """Start connections for new lines in servers.txt, stop removed ones. Mining continues."""
+        from .servers import load_servers
+        specs = load_servers(self.cfg.path("servers_file"))
+        wanted = {s.name: s for s in specs}
+        with self.lock:
+            current = {c.spec.name: c for c in self.conns}
+            added = [s for n, s in wanted.items() if n not in current]
+            removed = [c for n, c in current.items() if n not in wanted]
+            for c in removed:
+                c.stop()
+            new = [WorkerConn(s, self.cfg, self.on_found, self.rt.event, self.on_ready) for s in added]
+            self.conns = [c for c in self.conns if c not in removed] + new
+        for c in new:
+            c.start()
+        if added or removed:
+            self.event("info", "servers.txt: добавлено %d, удалено %d (майнинг не прерывался)" % (
+                len(added), len(removed)))
+        return added, removed
 
     def stop(self):
         self.running = False
