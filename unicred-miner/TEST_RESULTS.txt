@@ -1,4 +1,4 @@
-# UNICRED miner — test run 2026-09-24 16:50 UTC
+# UNICRED miner — test run 2026-09-24 16:59 UTC
 # Python 3.11.15, g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, Linux 6.18.44-fc-v37
 # NVRTC 11.8.89 + ptxas from nvidia-cuda-nvcc-cu12 12.9 (tools/.cache)
 # command: python -W ignore::ResourceWarning -m unittest discover -s tests -v
@@ -61,6 +61,6 @@ test_servers_txt (tests.test_6_windows_files.WindowsFilesTest.test_servers_txt) 
 test_wallet_key (tests.test_6_windows_files.WindowsFilesTest.test_wallet_key) ... ok
 
 ----------------------------------------------------------------------
-Ran 43 tests in 44.902s
+Ran 43 tests in 37.203s
 
 OK

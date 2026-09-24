@@ -144,6 +144,9 @@ class MockChain(object):
         except Revert as r:
             raise RpcFault(3, "execution reverted", "0x" + r.sel)
 
+    def rpc_eth_getCode(self, addr, block="latest"):
+        return "0x6001" if addr.lower() == P.UNICRED.lower() else "0x"
+
     def rpc_eth_getBalance(self, addr, block="latest"):
         return hex(self.balances.get(addr.lower(), 10 ** 18))
 

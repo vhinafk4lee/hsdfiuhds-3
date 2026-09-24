@@ -334,6 +334,7 @@ class CandidateLogicTest(ControllerTestBase):
         out = self.dir / "traits.csv"
         T.write_csv(rows, out)
         self.assertIn("trait:Rarity", out.read_text(encoding="utf-8-sig").splitlines()[0])
+        self.assertEqual(T.push20_addresses("0x6001" + "73" + "11" * 20 + "5b"), ["0x" + "11" * 20])
 
     def test_rpc_without_batch(self):
         srv, url = serve(self.chain, batch=False)

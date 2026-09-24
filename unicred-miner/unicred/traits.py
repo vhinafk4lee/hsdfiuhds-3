@@ -130,3 +130,41 @@ def summary(rows, trait="Rarity"):
 
 def main_counter(rows, trait="Rarity"):
     return Counter(r.get("trait:" + trait) for r in rows)
+
+
+def push20_addresses(code_hex):
+    """Addresses embedded in bytecode as PUSH20 constants."""
+    code = bytes.fromhex(code_hex[2:] if code_hex.startswith("0x") else code_hex)
+    out, i = [], 0
+    while i < len(code):
+        op = code[i]
+        if 0x60 <= op <= 0x7f:
+            n = op - 0x5f
+            if op == 0x73:
+                a = "0x" + code[i + 1:i + 21].hex()
+                if a not in out and int(a, 16) > 0xffff:
+                    out.append(a)
+            i += n + 1
+        else:
+            i += 1
+    return out
+
+
+def dump_code(chain, contract, directory):
+    """Save bytecode of the contract and of every contract it references (renderer, …)."""
+    saved = {}
+    queue = [contract.lower()]
+    while queue and len(saved) < 12:
+        addr = queue.pop(0)
+        if addr in saved:
+            continue
+        try:
+            code = chain.rpc.call("eth_getCode", [addr, "latest"])
+        except Exception:
+            continue
+        if not code or code == "0x":
+            continue
+        saved[addr] = len(code) // 2 - 1
+        (directory / ("code_%s.hex" % addr)).write_text(code, encoding="ascii")
+        queue += [a for a in push20_addresses(code) if a not in saved]
+    return saved

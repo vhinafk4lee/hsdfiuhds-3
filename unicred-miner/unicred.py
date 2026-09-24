@@ -323,7 +323,10 @@ def cmd_traits(cfg, args):
     print()
     for line in T.summary(rows, args.trait):
         print(line)
-    print("\nФайл: %s  — пришлите его (или скриншот таблицы выше)." % out)
+    saved = T.dump_code(chain, P.UNICRED, cfg.runtime)
+    for addr, size in saved.items():
+        print("байткод %s: %d байт -> runtime/code_%s.hex" % (addr, size, addr))
+    print("\nФайлы: %s и runtime/code_*.hex — пришлите их (или скриншот таблицы выше)." % out)
     return 0
 
 
