@@ -9,6 +9,8 @@ import threading
 import time
 from pathlib import Path
 
+from .config import read_text
+
 ROOT = Path(__file__).resolve().parent.parent
 WORKER_FILES = [ROOT / "worker" / "worker.py", ROOT / "worker" / "kernel.cu"]
 
@@ -88,7 +90,7 @@ def load_servers(path):
     if not path.exists():
         raise SystemExit("нет файла %s: вставьте туда SSH-строки из vast.ai (см. servers.example.txt)" % path)
     specs, seen = [], set()
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(read_text(path).splitlines(), 1):
         try:
             spec = parse_server_line(line)
         except ValueError as exc:

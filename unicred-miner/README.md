@@ -113,6 +113,7 @@ copy servers.example.txt servers.txt
 3. Вставьте её **как есть** отдельной строкой в `servers.txt`. Одна строка — один сервер, строки с `#` считаются комментариями.
    Можно указать отдельный ключ для сервера: `ssh -p 41234 root@ssh5.vast.ai -i C:\keys\vast`.
 
+Файл можно сохранять в любой кодировке: UTF-8, UTF-8 с BOM (Блокнот) или UTF-16 (PowerShell `>`).
 Перезапуск контроллера подхватывает изменения в `servers.txt`.
 
 ---
@@ -276,6 +277,8 @@ python -m unittest discover -s tests -v
    `check`, Ctrl+C. В реальную сеть ничего не отправляется.
 5. `test_5_worker_cuda_path` — CUDA-путь воркера (ctypes Driver API) на фейковом `libcuda`, который
    исполняет ядро на CPU: selftest, bench, протокол, fallback PTX для старых драйверов.
+6. `test_6_windows_files` — `servers.txt`, `config.json`, `wallet.key`, сохранённые Блокнотом (UTF-8 с BOM)
+   или PowerShell 5.1 (`>` пишет UTF-16), читаются правильно.
 
 Тестам 2, 3 и 5 нужны Linux и g++ (WSL подойдёт); на Windows они пропускаются.
 Результат прогона лежит в `TEST_RESULTS.txt`.

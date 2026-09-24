@@ -7,6 +7,7 @@ from pathlib import Path
 from eth_account import Account
 
 from . import pow as P
+from .config import read_text
 
 
 class Wallet(object):
@@ -14,7 +15,7 @@ class Wallet(object):
         path = Path(key_file)
         if not path.exists():
             raise SystemExit("нет файла ключа %s (см. README)" % path)
-        text = path.read_text(encoding="utf-8").strip()
+        text = read_text(path).strip()
         if text.startswith("{"):
             raise SystemExit("keystore JSON не поддерживается: положите в %s приватный ключ (hex)" % path)
         key = text if text.startswith("0x") else "0x" + text

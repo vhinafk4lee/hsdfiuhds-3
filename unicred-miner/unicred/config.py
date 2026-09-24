@@ -29,6 +29,14 @@ DEFAULTS = {
 }
 
 ETH = 10 ** 18
+
+
+def read_text(path):
+    """Read a small text file saved by any Windows editor: UTF-8 (with or without BOM) or UTF-16."""
+    raw = Path(path).read_bytes()
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        return raw.decode("utf-16")
+    return raw.decode("utf-8-sig")
 GWEI = 10 ** 9
 
 
@@ -72,8 +80,10 @@ def load_config(path="config.json", overrides=None):
     path = Path(path)
     data = dict(DEFAULTS)
     if path.exists():
-        with path.open("r", encoding="utf-8") as fh:
-            user = json.load(fh)
+        try:
+            user = json.loads(read_text(path))
+        except ValueError as exc:
+            raise SystemExit("%s: ошибка JSON: %s" % (path, exc))
         unknown = [k for k in user if k not in DEFAULTS and not k.startswith("_")]
         if unknown:
             raise SystemExit("config.json: неизвестные параметры: %s" % ", ".join(unknown))
