@@ -31,7 +31,9 @@ import sys
 #      и подставьте её имя сюда.
 COOKIE_NAME = "sessionid"
 
-# Токен НЕ хардкодим — берём из переменной окружения FOMOATER_TOKEN.
+# Токен НЕ хардкодим. Берём его так:
+#   1) сначала из переменной окружения FOMOATER_TOKEN (если задана);
+#   2) если её нет — просто спрашиваем в консоли при запуске (см. get_token()).
 SESSION_TOKEN = os.environ.get("FOMOATER_TOKEN")
 
 # Целевой сайт.
@@ -50,6 +52,27 @@ REQUEST_TIMEOUT = 30
 # ---------------------------------------------------------------------------
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ---------------------------------------------------------------------------
+
+def get_token() -> str:
+    """
+    Возвращает session-токен.
+
+    Сначала пытается взять из переменной окружения FOMOATER_TOKEN.
+    Если её нет — просто спрашивает токен в консоли (можно вставить и нажать Enter).
+    Так софт работает по принципу: запустил → вставил токен → он всё сделал сам.
+    """
+    if SESSION_TOKEN:
+        return SESSION_TOKEN.strip()
+
+    print("Вставьте session-токен и нажмите Enter.")
+    print("(Где взять: DevTools → Application → Cookies → www.fomoater.com)")
+    try:
+        token = input("Токен: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[X] Ввод отменён.")
+        return ""
+    return token
+
 
 def validate_token(token: str) -> None:
     """
@@ -131,16 +154,14 @@ def save_html(response) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    # Токен обязателен.
-    if not SESSION_TOKEN:
-        print("[X] Ошибка: не задана переменная окружения FOMOATER_TOKEN.")
-        print("    Задайте токен сессии перед запуском:")
-        print("      Windows PowerShell:  $env:FOMOATER_TOKEN=\"<ваш_токен>\"")
-        print("      Linux/macOS:         export FOMOATER_TOKEN=\"<ваш_токен>\"")
+    # Получаем токен: из переменной окружения или спрашиваем в консоли.
+    token = get_token()
+    if not token:
+        print("[X] Ошибка: токен не введён. Запустите софт ещё раз и вставьте токен.")
         return 1
 
     # Мягкая валидация — только предупреждения, работу не останавливаем.
-    validate_token(SESSION_TOKEN)
+    validate_token(token)
 
     # Импорт requests с понятной ошибкой, если он не установлен.
     try:
@@ -168,7 +189,7 @@ def main() -> int:
 
     # Ставим session-куку на нужный домен.
     try:
-        session.cookies.set(COOKIE_NAME, SESSION_TOKEN, domain=COOKIE_DOMAIN, path="/")
+        session.cookies.set(COOKIE_NAME, token, domain=COOKIE_DOMAIN, path="/")
     except Exception as e:
         print("[X] Ошибка при добавлении session-куки.")
         print(f"    Проверьте имя куки (COOKIE_NAME) и значение токена. Детали: {e}")
@@ -214,9 +235,16 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    exit_code = 1
     try:
-        sys.exit(main())
+        exit_code = main()
     except Exception as e:
         # Любая прочая непредвиденная ошибка — с типом исключения.
         print(f"[X] Непредвиденная ошибка ({type(e).__name__}): {e}")
-        sys.exit(1)
+    finally:
+        # Пауза, чтобы окно не закрывалось мгновенно при запуске двойным кликом.
+        try:
+            input("\nНажмите Enter, чтобы закрыть...")
+        except (EOFError, KeyboardInterrupt):
+            pass
+    sys.exit(exit_code)
