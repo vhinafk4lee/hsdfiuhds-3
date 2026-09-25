@@ -30,7 +30,7 @@ CLAIM_URL = os.getenv("CLAIM_URL", "https://airdrop.bigshort.xyz/?ref=EVM-5150")
 TOKEN_SYMBOL = "SHORT"
 
 REQUEST_TIMEOUT = 30
-MAX_RETRIES = 3  # ретраи на 429 (помимо первой попытки)
+MAX_RETRIES = max(0, int(os.getenv("MAX_RETRIES", "3")))  # ретраи на 429 (помимо первой попытки)
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "1.0"))
 
 HEADERS = {

@@ -40,6 +40,8 @@ cp .env.example .env      # Windows: copy .env.example .env
 | `DELAY` | `0.3` | пауза (сек) после каждого запроса в каждом потоке |
 | `BOT_TOKEN` | — | токен бота от @BotFather (только для `--bot`) |
 | `HTTPS_PROXY` | — | прокси, например `http://127.0.0.1:10809` |
+| `MAX_RETRIES` | `3` | сколько раз повторять запрос после HTTP 429 |
+| `RETRY_BASE_DELAY` | `1.0` | первая пауза (сек) после 429, дальше удваивается |
 | `CLAIM_URL` | `https://airdrop.bigshort.xyz/?ref=EVM-5150` | ссылка на клейм в итоге (если есть eligible, ещё не склеймленные); пустое значение — не показывать |
 
 Прокси из `HTTPS_PROXY` используется и для запросов к API (через `trust_env=True`), и для Telegram.
