@@ -149,6 +149,62 @@ def save_html(response) -> None:
         print(f"[!] Не удалось сохранить HTML: {e}")
 
 
+def check_session(token: str, save_response: bool = False):
+    """
+    Делает один HTTP-запрос со session-кукой и проверяет авторизацию.
+
+    Переиспользуется и основным скриптом, и почасовым монитором.
+
+    Возвращает кортеж (status, reason, response):
+      - status:  True  — авторизован;
+                 False — не авторизован (токен истёк / неверный);
+                 None  — не удалось определить (см. HTML/статус).
+      - reason:  человекочитаемая причина;
+      - response: объект ответа requests (или None при сетевой ошибке).
+
+    При сетевых ошибках возвращает (None, "<текст ошибки>", None) —
+    исключения не пробрасываются, чтобы монитор не падал в цикле.
+    """
+    import requests
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/128.0.0.0 Safari/537.36"
+        ),
+        "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+                   "image/avif,image/webp,*/*;q=0.8"),
+        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+    }
+
+    session = requests.Session()
+    session.headers.update(headers)
+
+    try:
+        session.cookies.set(COOKIE_NAME, token, domain=COOKIE_DOMAIN, path="/")
+    except Exception as e:
+        return None, f"ошибка при добавлении session-куки: {e}", None
+
+    try:
+        response = session.get(
+            TARGET_URL,
+            timeout=REQUEST_TIMEOUT,
+            allow_redirects=True,  # чтобы увидеть возможный редирект на логин
+        )
+    except requests.exceptions.Timeout:
+        return None, f"сайт не ответил за {REQUEST_TIMEOUT} секунд (таймаут)", None
+    except requests.exceptions.ConnectionError as e:
+        return None, f"ошибка сети / сайт недоступен: {e}", None
+    except requests.exceptions.RequestException as e:
+        return None, f"ошибка HTTP-запроса ({type(e).__name__}): {e}", None
+
+    status, reason = check_auth(response)
+    if save_response:
+        save_html(response)
+    return status, reason, response
+
+
 # ---------------------------------------------------------------------------
 # ОСНОВНАЯ ЛОГИКА
 # ---------------------------------------------------------------------------
@@ -165,71 +221,28 @@ def main() -> int:
 
     # Импорт requests с понятной ошибкой, если он не установлен.
     try:
-        import requests
+        import requests  # noqa: F401
     except ImportError:
         print("[X] Ошибка: не установлен пакет requests.")
         print("    Установите его командой:")
         print("      pip install requests")
         return 1
 
-    # Реалистичные заголовки обычного Chrome на Windows.
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/128.0.0.0 Safari/537.36"
-        ),
-        "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
-                   "image/avif,image/webp,*/*;q=0.8"),
-        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
-    }
+    # Одна проверка сессии (с сохранением HTML для ручного просмотра).
+    status, reason, response = check_session(token, save_response=True)
 
-    session = requests.Session()
-    session.headers.update(headers)
+    if response is not None:
+        print(f"[i] HTTP {response.status_code}, итоговый URL: {response.url}")
 
-    # Ставим session-куку на нужный домен.
-    try:
-        session.cookies.set(COOKIE_NAME, token, domain=COOKIE_DOMAIN, path="/")
-    except Exception as e:
-        print("[X] Ошибка при добавлении session-куки.")
-        print(f"    Проверьте имя куки (COOKIE_NAME) и значение токена. Детали: {e}")
-        return 1
-
-    # Делаем запрос.
-    try:
-        response = session.get(
-            TARGET_URL,
-            timeout=REQUEST_TIMEOUT,
-            allow_redirects=True,  # чтобы увидеть возможный редирект на логин
-        )
-    except requests.exceptions.Timeout:
-        print(f"[X] Ошибка: сайт не ответил за {REQUEST_TIMEOUT} секунд (таймаут).")
-        print("    Проверьте интернет-соединение и доступность сайта.")
-        return 1
-    except requests.exceptions.ConnectionError as e:
-        print("[X] Ошибка сети или сайт недоступен.")
-        print(f"    Не удалось подключиться к {TARGET_URL}. Детали: {e}")
-        return 1
-    except requests.exceptions.RequestException as e:
-        print(f"[X] Ошибка HTTP-запроса ({type(e).__name__}): {e}")
-        return 1
-
-    print(f"[i] HTTP {response.status_code}, итоговый URL: {response.url}")
-
-    # Проверка авторизации.
-    authorized, reason = check_auth(response)
-    if authorized is True:
+    if status is True:
         print("[OK] Авторизация успешна")
         print(f"     Причина: {reason}")
-    elif authorized is False:
+    elif status is False:
         print("[FAIL] Авторизация не удалась")
         print(f"       Причина: {reason}")
     else:
         print("[?] Не удалось определить статус авторизации")
         print(f"    Причина: {reason}")
-
-    # Сохраняем HTML в любом случае (аналог скриншота — можно открыть в браузере).
-    save_html(response)
 
     return 0
 
