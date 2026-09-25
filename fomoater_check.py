@@ -7,14 +7,16 @@ fomoater_check.py
 через готовый session-токен, взятый вручную из cookies браузера после входа
 через X (Twitter) OAuth.
 
+Версия на requests — БЕЗ открытия браузера. Скрипт делает обычный HTTP-запрос
+с подставленной session-кукой и анализирует ответ (редиректы, статус, HTML)
+на признаки авторизации.
+
 Никаких прокси, антидетекта и мультиаккаунтинга — только один свой аккаунт.
-Скрипт лишь подставляет уже полученную куку и смотрит, залогинен ли пользователь.
 """
 
 import os
 import re
 import sys
-import time
 
 # ---------------------------------------------------------------------------
 # КОНФИГ
@@ -35,11 +37,14 @@ SESSION_TOKEN = os.environ.get("FOMOATER_TOKEN")
 # Целевой сайт.
 TARGET_URL = "https://www.fomoater.com"
 
-# Путь для скриншота.
-SCREENSHOT_PATH = "fomoater_check.png"
+# Домен, на который ставится кука.
+COOKIE_DOMAIN = ".fomoater.com"
 
-# Сколько секунд подождать после загрузки страницы (чтобы прогрузился JS/контент).
-WAIT_SECONDS = 3
+# Куда сохранить полученный HTML (для ручного просмотра вместо скриншота).
+RESPONSE_HTML_PATH = "fomoater_check.html"
+
+# Таймаут HTTP-запроса, секунд.
+REQUEST_TIMEOUT = 30
 
 
 # ---------------------------------------------------------------------------
@@ -64,23 +69,25 @@ def validate_token(token: str) -> None:
               f"но продолжаем.")
 
 
-def check_auth(page):
+def check_auth(response):
     """
-    Проверка авторизации на открытой странице.
+    Проверка авторизации по HTTP-ответу.
 
     Возвращает кортеж (authorized: bool | None, reason: str):
       - (True,  причина)  — найден положительный признак (мы залогинены);
       - (False, причина)  — найден отрицательный признак (мы НЕ залогинены);
       - (None,  причина)  — ничего однозначного не нашли ("не удалось определить").
     """
-    # 1) Проверяем URL: редирект на страницу логина / OAuth X говорит о том,
-    #    что мы не авторизованы.
-    current_url = (page.url or "").lower()
-    if "login" in current_url or "x.com/i/oauth" in current_url:
-        return False, f"после загрузки произошёл редирект на страницу входа: {page.url}"
+    final_url = (response.url or "").lower()
+    html = response.text or ""
+    html_lower = html.lower()
 
-    # 2) Положительные признаки — видимый текст, который есть только у залогиненного
-    #    пользователя. Регистронезависимо через regex.
+    # 1) Проверяем итоговый URL: редирект на логин / OAuth X = не авторизованы.
+    if "login" in final_url or "x.com/i/oauth" in final_url:
+        return False, f"после запроса произошёл редирект на страницу входа: {response.url}"
+
+    # 2) Положительные признаки — текст, который есть только у залогиненного
+    #    пользователя (регистронезависимо).
     positive_patterns = [
         r"logout",
         r"sign\s*out",
@@ -89,17 +96,10 @@ def check_auth(page):
         r"my\s*card",
     ]
     for pattern in positive_patterns:
-        locator = page.get_by_text(re.compile(pattern, re.IGNORECASE))
-        # Берём первый элемент и проверяем видимость (count>0 недостаточно —
-        # элемент может быть в скрытом меню).
-        try:
-            if locator.count() > 0 and locator.first.is_visible():
-                return True, f"найден положительный признак авторизации: '{pattern}'"
-        except Exception:
-            # Если локатор по какой-то причине не проверился — просто идём дальше.
-            continue
+        if re.search(pattern, html_lower, re.IGNORECASE):
+            return True, f"в ответе найден положительный признак авторизации: '{pattern}'"
 
-    # 3) Отрицательные признаки — видимые кнопки/ссылки для входа.
+    # 3) Отрицательные признаки — кнопки/ссылки для входа.
     negative_texts = [
         "Login with X",
         "Sign in with X",
@@ -107,17 +107,23 @@ def check_auth(page):
         "Login with Twitter",
     ]
     for text in negative_texts:
-        locator = page.get_by_text(re.compile(re.escape(text), re.IGNORECASE))
-        try:
-            if locator.count() > 0 and locator.first.is_visible():
-                return False, f"на странице видна кнопка входа: '{text}'"
-        except Exception:
-            continue
+        if re.search(re.escape(text), html, re.IGNORECASE):
+            return False, f"в ответе видна кнопка входа: '{text}'"
 
     # 4) Ничего однозначного не нашли.
     return None, ("не найдено ни положительных, ни отрицательных признаков — "
                   "не удалось определить статус авторизации автоматически "
-                  "(посмотрите скриншот вручную)")
+                  f"(HTTP {response.status_code}; см. сохранённый HTML)")
+
+
+def save_html(response) -> None:
+    """Сохраняет тело ответа в файл для ручного просмотра."""
+    try:
+        with open(RESPONSE_HTML_PATH, "w", encoding="utf-8") as f:
+            f.write(response.text or "")
+        print(f"[i] HTML ответа сохранён: {RESPONSE_HTML_PATH}")
+    except Exception as e:
+        print(f"[!] Не удалось сохранить HTML: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -136,118 +142,81 @@ def main() -> int:
     # Мягкая валидация — только предупреждения, работу не останавливаем.
     validate_token(SESSION_TOKEN)
 
-    # Импорт Playwright с понятной ошибкой, если он не установлен.
+    # Импорт requests с понятной ошибкой, если он не установлен.
     try:
-        from playwright.sync_api import sync_playwright
-        from playwright.sync_api import Error as PlaywrightError
-        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        import requests
     except ImportError:
-        print("[X] Ошибка: не установлен пакет playwright.")
-        print("    Установите его и браузер командами:")
-        print("      pip install playwright")
-        print("      playwright install chromium")
+        print("[X] Ошибка: не установлен пакет requests.")
+        print("    Установите его командой:")
+        print("      pip install requests")
         return 1
 
-    browser = None
+    # Реалистичные заголовки обычного Chrome на Windows.
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/128.0.0.0 Safari/537.36"
+        ),
+        "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+                   "image/avif,image/webp,*/*;q=0.8"),
+        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+    }
+
+    session = requests.Session()
+    session.headers.update(headers)
+
+    # Ставим session-куку на нужный домен.
     try:
-        with sync_playwright() as p:
-            # 3) Запуск Chromium в видимом режиме.
-            try:
-                browser = p.chromium.launch(headless=False)
-            except PlaywrightError as e:
-                # Частый случай — не установлен сам браузер Chromium.
-                print("[X] Ошибка запуска браузера Chromium.")
-                print("    Возможно, браузер не установлен. Выполните:")
-                print("      playwright install chromium")
-                print(f"    Детали: {e}")
-                return 1
-
-            # 4) Контекст с реалистичными параметрами обычного Chrome на Windows.
-            user_agent = (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/128.0.0.0 Safari/537.36"
-            )
-            context = browser.new_context(
-                user_agent=user_agent,
-                viewport={"width": 1366, "height": 768},
-                locale="ru-RU",
-            )
-
-            # 5) Добавляем session-куку.
-            try:
-                context.add_cookies([{
-                    "name": COOKIE_NAME,
-                    "value": SESSION_TOKEN,
-                    "domain": ".fomoater.com",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True,
-                    "sameSite": "Lax",
-                }])
-            except Exception as e:
-                print("[X] Ошибка при добавлении session-куки.")
-                print(f"    Проверьте имя куки (COOKIE_NAME) и значение токена. Детали: {e}")
-                return 1
-
-            page = context.new_page()
-
-            # 6) Переход на целевой сайт.
-            try:
-                page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30_000)
-            except PlaywrightTimeoutError:
-                print("[X] Ошибка: страница не загрузилась за 30 секунд (таймаут).")
-                print("    Проверьте интернет-соединение и доступность сайта.")
-                # Всё равно попробуем сделать скриншот того, что успело загрузиться.
-                _safe_screenshot(page)
-                return 1
-            except PlaywrightError as e:
-                # Сетевые ошибки / сайт недоступен.
-                print("[X] Ошибка сети или сайт недоступен.")
-                print(f"    Не удалось открыть {TARGET_URL}. Детали: {e}")
-                return 1
-
-            # Небольшая пауза, чтобы прогрузился динамический контент.
-            time.sleep(WAIT_SECONDS)
-
-            # 7) Проверка авторизации.
-            authorized, reason = check_auth(page)
-            if authorized is True:
-                print("[OK] Авторизация успешна")
-                print(f"     Причина: {reason}")
-            elif authorized is False:
-                print("[FAIL] Авторизация не удалась")
-                print(f"       Причина: {reason}")
-            else:
-                print("[?] Не удалось определить статус авторизации")
-                print(f"    Причина: {reason}")
-
-            # 8) Скриншот в любом случае.
-            _safe_screenshot(page)
-
-            return 0
-
+        session.cookies.set(COOKIE_NAME, SESSION_TOKEN, domain=COOKIE_DOMAIN, path="/")
     except Exception as e:
-        # 10) Любая прочая ошибка — с типом исключения.
-        print(f"[X] Непредвиденная ошибка ({type(e).__name__}): {e}")
+        print("[X] Ошибка при добавлении session-куки.")
+        print(f"    Проверьте имя куки (COOKIE_NAME) и значение токена. Детали: {e}")
         return 1
-    finally:
-        # 9) Закрываем браузер в любом случае.
-        if browser is not None:
-            try:
-                browser.close()
-            except Exception:
-                pass
 
-
-def _safe_screenshot(page) -> None:
-    """Делает скриншот всей страницы, не роняя скрипт при ошибке."""
+    # Делаем запрос.
     try:
-        page.screenshot(path=SCREENSHOT_PATH, full_page=True)
-        print(f"[i] Скриншот сохранён: {SCREENSHOT_PATH}")
-    except Exception as e:
-        print(f"[!] Не удалось сохранить скриншот: {e}")
+        response = session.get(
+            TARGET_URL,
+            timeout=REQUEST_TIMEOUT,
+            allow_redirects=True,  # чтобы увидеть возможный редирект на логин
+        )
+    except requests.exceptions.Timeout:
+        print(f"[X] Ошибка: сайт не ответил за {REQUEST_TIMEOUT} секунд (таймаут).")
+        print("    Проверьте интернет-соединение и доступность сайта.")
+        return 1
+    except requests.exceptions.ConnectionError as e:
+        print("[X] Ошибка сети или сайт недоступен.")
+        print(f"    Не удалось подключиться к {TARGET_URL}. Детали: {e}")
+        return 1
+    except requests.exceptions.RequestException as e:
+        print(f"[X] Ошибка HTTP-запроса ({type(e).__name__}): {e}")
+        return 1
+
+    print(f"[i] HTTP {response.status_code}, итоговый URL: {response.url}")
+
+    # Проверка авторизации.
+    authorized, reason = check_auth(response)
+    if authorized is True:
+        print("[OK] Авторизация успешна")
+        print(f"     Причина: {reason}")
+    elif authorized is False:
+        print("[FAIL] Авторизация не удалась")
+        print(f"       Причина: {reason}")
+    else:
+        print("[?] Не удалось определить статус авторизации")
+        print(f"    Причина: {reason}")
+
+    # Сохраняем HTML в любом случае (аналог скриншота — можно открыть в браузере).
+    save_html(response)
+
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        # Любая прочая непредвиденная ошибка — с типом исключения.
+        print(f"[X] Непредвиденная ошибка ({type(e).__name__}): {e}")
+        sys.exit(1)
