@@ -9,6 +9,18 @@ export function parseBlacklist(raw) {
   );
 }
 
+/**
+ * Uniswap prints its fee tier in the pool name ("SHIT / WETH 0.05%"). The
+ * cheapest tiers make churning volume nearly free, so they are where faked
+ * volume shows up — worth excluding wholesale.
+ */
+export function hasSkippedFeeTier(pool, feeTiers) {
+  if (feeTiers.size === 0) return false;
+
+  const name = normalize(pool.name);
+  return [...feeTiers].some((tier) => name.endsWith(tier));
+}
+
 /** An entry matches a pair ("USDG / WETH"), a base token symbol, or either address. */
 export function isBlacklisted(pool, blacklist) {
   if (blacklist.size === 0) return false;

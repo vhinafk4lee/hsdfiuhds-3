@@ -1,7 +1,7 @@
 import { loadConfig } from './config.js';
 import { fetchCandles } from './geckoterminal.js';
 import { sendMessage, formatAlert, formatAge } from './telegram.js';
-import { isBlacklisted } from './blacklist.js';
+import { isBlacklisted, hasSkippedFeeTier } from './blacklist.js';
 import { createScanner } from './scanner.js';
 import { createAlertGate } from './alerts.js';
 import { fetchStockTokens } from './stocktokens.js';
@@ -14,10 +14,13 @@ async function runCycle(config, scanner, gate, blacklist) {
   // A candle of `windowMinutes` that crossed the threshold is always contained in
   // the wider rolling window below, so filtering on it cannot drop a real hit.
   const prefilter = config.windowMinutes <= 5 ? 'volume5m' : 'volume1h';
+  const excluded = (pool) =>
+    isBlacklisted(pool, blacklist) || hasSkippedFeeTier(pool, config.skipFeeTiers);
+
   const watched = [];
   const skipped = [];
   for (const pool of pools) {
-    if (isBlacklisted(pool, blacklist)) skipped.push(pool.baseSymbol ?? pool.name);
+    if (excluded(pool)) skipped.push(pool.baseSymbol ?? pool.name);
     else watched.push(pool);
   }
   // A token on hold cannot produce a message, so confirming it would spend a
@@ -40,7 +43,7 @@ async function runCycle(config, scanner, gate, blacklist) {
   // scan actually saw: without this there is no way to tell later whether a
   // token was below the threshold, blacklisted, or never in view at all.
   const label = (pool) =>
-    `${isBlacklisted(pool, blacklist) ? '*' : ''}${pool.baseSymbol ?? pool.address}`;
+    `${excluded(pool) ? '*' : ''}${pool.baseSymbol ?? pool.address}`;
   console.log(
     'top5m ' +
       [...pools]

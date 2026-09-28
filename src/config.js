@@ -46,6 +46,8 @@ export function loadConfig() {
     // still stands.
     maxCandidates: num('MAX_CANDIDATES_PER_CYCLE', 2),
     blacklist: parseBlacklist(process.env.BLACKLIST),
+    // Fee tiers to ignore entirely, matched at the end of the pool name.
+    skipFeeTiers: parseBlacklist(process.env.SKIP_FEE_TIERS),
     // Robinhood Chain carries hundreds of tokenised stocks; they are not what
     // these alerts are for, and listing them by hand never ends.
     excludeStockTokens: process.env.EXCLUDE_STOCK_TOKENS !== '0',
