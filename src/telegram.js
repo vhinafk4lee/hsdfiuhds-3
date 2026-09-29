@@ -75,7 +75,6 @@ export function assessRisk(token) {
 /** Alert built from a GMGN ranking item: the volume plus GMGN's risk scores. */
 export function formatGmgnAlert({ token, windowMinutes, chain, now = Date.now() }) {
   const symbol = escapeHtml(token.symbol ?? token.address);
-  const risk = assessRisk(token);
   const age = formatAge(token.creation_timestamp ? token.creation_timestamp * 1000 : null, now);
   const change = Number(token.price_change_percent1m);
   const venue = token.launchpad_platform || token.launchpad;
@@ -83,7 +82,6 @@ export function formatGmgnAlert({ token, windowMinutes, chain, now = Date.now() 
 
   return [
     `🚨 <b>${symbol}</b> — ${usd.format(token.volume)} in ${windowMinutes} min`,
-    `${risk.icon} <b>${risk.label}</b>${risk.reasons.length ? `: ${risk.reasons.join(', ')}` : ''}`,
     '',
     [age ? `Age: ${age}` : null, venue ? escapeHtml(venue) : null].filter(Boolean).join(' · '),
     `Price: $${Number(token.price).toPrecision(4)}${Number.isFinite(change) ? ` (${change >= 0 ? '+' : ''}${change.toFixed(2)}% 1m)` : ''}`,
