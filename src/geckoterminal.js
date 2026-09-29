@@ -1,6 +1,17 @@
-const BASE = 'https://api.geckoterminal.com/api/v2';
-const HEADERS = { Accept: 'application/json;version=20230302' };
 const PAGE_SIZE = 20;
+
+// The same GeckoTerminal data is served three ways: keyless (a few requests a
+// minute from a cloud IP), and through CoinGecko's onchain API with a Demo
+// (~30/min, free) or paid Pro key. Paths and response shapes are identical.
+let BASE = 'https://api.geckoterminal.com/api/v2';
+let HEADERS = { Accept: 'application/json;version=20230302' };
+
+export function useCoinGeckoKey(apiKey, plan = 'demo') {
+  if (!apiKey) return;
+  const pro = plan === 'pro';
+  BASE = pro ? 'https://pro-api.coingecko.com/api/v3/onchain' : 'https://api.coingecko.com/api/v3/onchain';
+  HEADERS = { Accept: 'application/json', [pro ? 'x-cg-pro-api-key' : 'x-cg-demo-api-key']: apiKey };
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

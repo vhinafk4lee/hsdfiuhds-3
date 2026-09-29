@@ -20,6 +20,8 @@ export function loadConfig() {
     throw new Error(`WINDOW_MINUTES must be 1, 5 or 15, got: ${windowMinutes}`);
   }
 
+  const withCoinGecko = Boolean(process.env.COINGECKO_API_KEY);
+
   return {
     botToken,
     chatId,
@@ -28,12 +30,16 @@ export function loadConfig() {
     alertCooldownMinutes: num('ALERT_COOLDOWN_MINUTES', 30),
     windowMinutes,
     pollIntervalSeconds: num('POLL_INTERVAL_SECONDS', 60),
+    // A CoinGecko key serves the same data at ~30 requests a minute instead of
+    // the few the keyless API allows, so the scan defaults below go deeper.
+    coingeckoApiKey: process.env.COINGECKO_API_KEY || null,
+    coingeckoPlan: process.env.COINGECKO_PLAN === 'pro' ? 'pro' : 'demo',
     // 20 pools per page. The public API throttles a cloud IP down to a couple
     // of requests a minute, so a cycle scans the hot pages plus a rotating
     // slice of the rest rather than all of them.
-    maxPoolPages: num('MAX_POOL_PAGES', 4),
-    hotPages: num('HOT_PAGES', 1),
-    rotatingPages: num('ROTATING_PAGES', 1),
+    maxPoolPages: num('MAX_POOL_PAGES', withCoinGecko ? 10 : 4),
+    hotPages: num('HOT_PAGES', withCoinGecko ? 2 : 1),
+    rotatingPages: num('ROTATING_PAGES', withCoinGecko ? 2 : 1),
     useTrending: process.env.USE_TRENDING !== '0',
     // Investigate without posting: everything runs and is logged, nothing
     // reaches Telegram.
@@ -44,7 +50,7 @@ export function loadConfig() {
     // Each candidate costs a confirmation request, and the API tolerates only a
     // few per minute; the rest are picked up next cycle, while the 5m evidence
     // still stands.
-    maxCandidates: num('MAX_CANDIDATES_PER_CYCLE', 2),
+    maxCandidates: num('MAX_CANDIDATES_PER_CYCLE', withCoinGecko ? 5 : 2),
     blacklist: parseBlacklist(process.env.BLACKLIST),
     // Fee tiers to ignore entirely, matched at the end of the pool name.
     skipFeeTiers: parseBlacklist(process.env.SKIP_FEE_TIERS),

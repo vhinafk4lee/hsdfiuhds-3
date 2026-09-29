@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { fetchCandles } from './geckoterminal.js';
+import { fetchCandles, useCoinGeckoKey } from './geckoterminal.js';
 import { sendMessage, formatAlert, formatAge, formatGmgnAlert, assessRisk } from './telegram.js';
 import { isBlacklisted, hasSkippedFeeTier, isAllowedDex } from './blacklist.js';
 import { createScanner } from './scanner.js';
@@ -220,6 +220,7 @@ async function runCycle(config, scanner, gate, blacklist) {
 
 async function main() {
   const config = loadConfig();
+  useCoinGeckoKey(config.coingeckoApiKey, config.coingeckoPlan);
 
   const scanner = createScanner({
     network: config.network,
@@ -243,7 +244,8 @@ async function main() {
   } else {
     const coverageSeconds = scanner.coverageCycles() * pollSeconds;
     console.log(
-      `watching ${config.network}: >= $${config.thresholdUsd} per ${config.windowMinutes}m window, ` +
+      `watching ${config.network} via ${config.coingeckoApiKey ? `CoinGecko (${config.coingeckoPlan} key)` : 'GeckoTerminal (no key)'}: ` +
+        `>= $${config.thresholdUsd} per ${config.windowMinutes}m window, ` +
         `polling every ${pollSeconds}s, every page revisited within ${coverageSeconds}s`,
     );
 
