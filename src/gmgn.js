@@ -41,14 +41,20 @@ async function get(apiKey, path, query) {
  * Tokens ranked by traded USD over the last `interval`. With interval=1m and
  * min_volume at the threshold this is the whole detection funnel in one call.
  */
-export async function fetchRank(apiKey, { chain, interval = '1m', limit = 20, minVolume } = {}) {
-  const data = await get(apiKey, '/v1/market/rank', {
+export async function fetchRankData(apiKey, { chain, interval = '1m', limit = 20, minVolume, filters } = {}) {
+  return get(apiKey, '/v1/market/rank', {
     chain,
     interval,
     order_by: 'volume',
     direction: 'desc',
     limit,
     min_volume: minVolume,
+    // Omitted, the server applies the chain's defaults (on EVM: not_honeypot,
+    // verified, renounced) — passing any list replaces them.
+    filters: filters?.length ? filters : undefined,
   });
-  return data?.rank ?? [];
+}
+
+export async function fetchRank(apiKey, options) {
+  return (await fetchRankData(apiKey, options))?.rank ?? [];
 }

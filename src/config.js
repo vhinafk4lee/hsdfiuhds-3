@@ -61,5 +61,9 @@ export function loadConfig() {
     // from it reaches Telegram yet.
     gmgnApiKey: process.env.GMGN_API_KEY || null,
     gmgnChain: process.env.GMGN_CHAIN || 'robinhood',
+    gmgnFilters: (process.env.GMGN_FILTERS ?? '')
+      .split(',')
+      .map((f) => f.trim())
+      .filter(Boolean),
   };
 }

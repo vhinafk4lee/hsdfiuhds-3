@@ -5,7 +5,7 @@ import { isBlacklisted, hasSkippedFeeTier, isAllowedDex } from './blacklist.js';
 import { createScanner } from './scanner.js';
 import { createAlertGate } from './alerts.js';
 import { fetchStockTokens } from './stocktokens.js';
-import { fetchRank } from './gmgn.js';
+import { fetchRank, fetchRankData } from './gmgn.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -20,7 +20,12 @@ let gmgnRawLogged = false;
 async function shadowGmgn(config, blacklist) {
   let rank;
   try {
-    rank = await fetchRank(config.gmgnApiKey, { chain: config.gmgnChain, interval: '1m', limit: 20 });
+    rank = await fetchRank(config.gmgnApiKey, {
+      chain: config.gmgnChain,
+      interval: '1m',
+      limit: 20,
+      filters: config.gmgnFilters,
+    });
   } catch (error) {
     console.error(`gmgn: ${error.message}`);
     return;
@@ -45,6 +50,43 @@ async function shadowGmgn(config, blacklist) {
   console.log(`gmgn1m ${rank.slice(0, 5).map(describe).join(' ')}`);
   for (const item of rank.filter((i) => Number(i.volume) >= config.thresholdUsd)) {
     console.log(`gmgn-hit ${describe(item)} ${item.address}`);
+  }
+}
+
+/**
+ * An empty ranking can mean a quiet minute or filters that exclude the whole
+ * chain, and the logs cannot tell those apart. Asking a few variants side by
+ * side at startup shows which it is.
+ */
+async function probeGmgn(config) {
+  const variants = [
+    ['1m', []],
+    ['5m', []],
+    ['24h', []],
+    ['1m', ['not_honeypot']],
+    ['24h', ['not_honeypot']],
+  ];
+  for (const [interval, filters] of variants) {
+    const label = `${interval} filters=${filters.join('+') || 'default'}`;
+    try {
+      const data = await fetchRankData(config.gmgnApiKey, {
+        chain: config.gmgnChain,
+        interval,
+        limit: 10,
+        filters,
+      });
+      const rank = data?.rank ?? [];
+      console.log(
+        `gmgn probe ${label}: keys=${Object.keys(data ?? {}).join(',') || 'none'} items=${rank.length} ` +
+          rank
+            .slice(0, 5)
+            .map((i) => `${i.symbol}=${Math.round(i.volume ?? 0)}`)
+            .join(' '),
+      );
+    } catch (error) {
+      console.error(`gmgn probe ${label}: ${error.message}`);
+    }
+    await sleep(1500);
   }
 }
 
@@ -219,6 +261,8 @@ async function main() {
       `✅ Bot started. Watching <b>${config.network}</b>: alerting on $${config.thresholdUsd.toLocaleString('en-US')}+ volume in ${config.windowMinutes} min.`,
     );
   }
+
+  if (config.gmgnApiKey) await probeGmgn(config);
 
   let stockTokens = new Set();
   let refreshStockTokensAt = 0;
