@@ -56,14 +56,20 @@ export function loadConfig() {
     // these alerts are for, and listing them by hand never ends.
     excludeStockTokens: process.env.EXCLUDE_STOCK_TOKENS !== '0',
     stockRegistryUrl: process.env.STOCK_REGISTRY_URL || 'https://api.robinhood.com/rhj/assets',
-    // GMGN is being evaluated as a replacement data source. With a key set, each
-    // cycle also asks its 1m ranking and logs it next to our own scan; nothing
-    // from it reaches Telegram yet.
+    // With a GMGN key the bot takes its 1m volume ranking instead of scanning
+    // GeckoTerminal; without one it falls back to the GeckoTerminal funnel.
     gmgnApiKey: process.env.GMGN_API_KEY || null,
     gmgnChain: process.env.GMGN_CHAIN || 'robinhood',
     gmgnFilters: (process.env.GMGN_FILTERS ?? '')
       .split(',')
       .map((f) => f.trim())
       .filter(Boolean),
+    // GMGN's 1m figure moves within the minute, so sampling it more often than
+    // once a minute keeps a spike from falling between two looks. Its rate
+    // limit allows far more than this.
+    gmgnPollSeconds: num('GMGN_POLL_SECONDS', 20),
+    // Tokens GMGN rates high risk (rug, wash trading, honeypot, sell tax) are
+    // logged but not posted unless this is 1.
+    sendHighRisk: process.env.SEND_HIGH_RISK === '1',
   };
 }

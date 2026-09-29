@@ -1,92 +1,85 @@
 import { loadConfig } from './config.js';
 import { fetchCandles } from './geckoterminal.js';
-import { sendMessage, formatAlert, formatAge } from './telegram.js';
+import { sendMessage, formatAlert, formatAge, formatGmgnAlert, assessRisk } from './telegram.js';
 import { isBlacklisted, hasSkippedFeeTier, isAllowedDex } from './blacklist.js';
 import { createScanner } from './scanner.js';
 import { createAlertGate } from './alerts.js';
 import { fetchStockTokens } from './stocktokens.js';
-import { fetchRank, fetchRankData } from './gmgn.js';
+import { fetchRank } from './gmgn.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-let gmgnRawLogged = false;
+/** Stock tokens carry the issuer's suffix in their name even before the registry lists them. */
+const isStockName = (name) => /robinhood token$/i.test(String(name ?? '').trim());
 
 /**
- * Logs GMGN's 1m ranking beside our own scan, so the two can be compared on the
- * same minutes before GMGN is trusted with alerts. Its field names are taken
- * from its docs, which contradict themselves in places — the first response is
- * dumped raw once so the real shape can be checked.
+ * One GMGN request replaces the whole GeckoTerminal funnel: its ranking is
+ * already per token (all pools summed), in USD, over the last minute, and
+ * carries GMGN's own rug and wash-trading scores for the message.
  */
-async function shadowGmgn(config, blacklist) {
-  let rank;
-  try {
-    rank = await fetchRank(config.gmgnApiKey, {
-      chain: config.gmgnChain,
-      interval: '1m',
-      limit: 20,
-      filters: config.gmgnFilters,
-    });
-  } catch (error) {
-    console.error(`gmgn: ${error.message}`);
-    return;
+async function runGmgnCycle(config, gate, blacklist) {
+  const rank = await fetchRank(config.gmgnApiKey, {
+    chain: config.gmgnChain,
+    interval: '1m',
+    limit: 50,
+    minVolume: config.thresholdUsd,
+    filters: config.gmgnFilters,
+  });
+
+  const hits = [];
+  const skipped = [];
+  for (const token of rank) {
+    if (Number(token.volume) < config.thresholdUsd) continue;
+    // Shaped like a pool so the blacklist and the per-token hold apply unchanged.
+    const asPool = { address: token.address, baseAddress: token.address, baseSymbol: token.symbol };
+    if (isBlacklisted(asPool, blacklist) || isStockName(token.name)) skipped.push(token.symbol);
+    else hits.push({ token, asPool });
   }
 
-  if (!gmgnRawLogged) {
-    gmgnRawLogged = true;
-    console.log(`gmgn raw (${rank.length} items): ${JSON.stringify(rank.slice(0, 2)).slice(0, 4000)}`);
-  }
+  console.log(
+    `[${new Date().toISOString()}] gmgn items=${rank.length} hits=${hits.length} ` +
+      `skipped=${skipped.length}${skipped.length ? `(${[...new Set(skipped)].join(',')})` : ''} ` +
+      `top=${rank
+        .slice(0, 3)
+        .map((t) => `${t.symbol}=${Math.round(t.volume)}`)
+        .join(' ')}`,
+  );
 
-  const pct = (value) => (value === undefined || value === null || value === '' ? '?' : Math.round(value * 100));
-  const describe = (item) => {
-    const excluded = isBlacklisted({ baseSymbol: item.symbol, baseAddress: item.address }, blacklist);
-    return (
-      `${excluded ? '*' : ''}${item.symbol}=${Math.round(item.volume)}` +
-      `(liq=${Math.round(item.liquidity ?? 0)} rug=${pct(item.rug_ratio)} wash=${item.is_wash_trading ? 1 : 0} ` +
-      `bundler=${pct(item.bundler_rate)} ex=${item.exchange ?? item.launchpad_platform ?? '?'} ` +
-      `age=${formatAge(item.creation_timestamp ? item.creation_timestamp * 1000 : null) ?? '?'})`
-    );
-  };
+  for (const { token, asPool } of hits) {
+    const risk = assessRisk(token);
+    const summary =
+      `${token.symbol} ${Math.round(token.volume)} ${risk.label}` +
+      `${risk.reasons.length ? `(${risk.reasons.join(',')})` : ''} ` +
+      `age=${formatAge(token.creation_timestamp ? token.creation_timestamp * 1000 : null) ?? 'unknown'} ${token.address}`;
 
-  console.log(`gmgn1m ${rank.slice(0, 5).map(describe).join(' ')}`);
-  for (const item of rank.filter((i) => Number(i.volume) >= config.thresholdUsd)) {
-    console.log(`gmgn-hit ${describe(item)} ${item.address}`);
-  }
-}
+    if (gate.isHeld(asPool)) continue;
 
-/**
- * An empty ranking can mean a quiet minute or filters that exclude the whole
- * chain, and the logs cannot tell those apart. Asking a few variants side by
- * side at startup shows which it is.
- */
-async function probeGmgn(config) {
-  const variants = [
-    ['1m', []],
-    ['5m', []],
-    ['24h', []],
-    ['1m', ['not_honeypot']],
-    ['24h', ['not_honeypot']],
-  ];
-  for (const [interval, filters] of variants) {
-    const label = `${interval} filters=${filters.join('+') || 'default'}`;
+    // A high-risk verdict means rugged, faked or unsellable — the calls these
+    // alerts kept getting wrong — so they stay out of the channel by default.
+    if (risk.icon === '🔴' && !config.sendHighRisk) {
+      console.log(`drop ${summary}`);
+      continue;
+    }
+
+    if (config.silent) {
+      console.log(`WOULD ALERT ${summary}`);
+      continue;
+    }
+
     try {
-      const data = await fetchRankData(config.gmgnApiKey, {
-        chain: config.gmgnChain,
-        interval,
-        limit: 10,
-        filters,
-      });
-      const rank = data?.rank ?? [];
-      console.log(
-        `gmgn probe ${label}: keys=${Object.keys(data ?? {}).join(',') || 'none'} items=${rank.length} ` +
-          rank
-            .slice(0, 5)
-            .map((i) => `${i.symbol}=${Math.round(i.volume ?? 0)}`)
-            .join(' '),
+      await sendMessage(
+        config.botToken,
+        config.chatId,
+        formatGmgnAlert({ token, windowMinutes: 1, chain: config.gmgnChain }),
       );
     } catch (error) {
-      console.error(`gmgn probe ${label}: ${error.message}`);
+      console.error(`send ${token.symbol} failed: ${error.message}`);
+      continue;
     }
-    await sleep(1500);
+
+    // No candle here: the hold alone keeps one pump to one message.
+    gate.record(asPool, { timestamp: Date.now() });
+    console.log(`alert ${summary}`);
   }
 }
 
@@ -173,8 +166,6 @@ async function runCycle(config, scanner, gate, blacklist) {
     );
   }
 
-  if (config.gmgnApiKey) await shadowGmgn(config, blacklist);
-
   for (const pool of candidates) {
     let candles;
     try {
@@ -240,16 +231,26 @@ async function main() {
 
   const gate = createAlertGate({ cooldownMs: config.alertCooldownMinutes * 60_000 });
 
-  const coverageSeconds = scanner.coverageCycles() * config.pollIntervalSeconds;
-  console.log(
-    `watching ${config.network}: >= $${config.thresholdUsd} per ${config.windowMinutes}m window, ` +
-      `polling every ${config.pollIntervalSeconds}s, every page revisited within ${coverageSeconds}s`,
-  );
+  const useGmgn = Boolean(config.gmgnApiKey);
+  const pollSeconds = useGmgn ? config.gmgnPollSeconds : config.pollIntervalSeconds;
 
-  // The 5m volume is what makes a spike detectable, so a page left unscanned
-  // for longer than that can hide one.
-  if (coverageSeconds > 300) {
-    console.warn(`WARNING: full coverage takes ${coverageSeconds}s, longer than the 300s window`);
+  if (useGmgn) {
+    console.log(
+      `watching ${config.gmgnChain} via GMGN: >= $${config.thresholdUsd} per 1m, polling every ${pollSeconds}s, ` +
+        `high-risk tokens ${config.sendHighRisk ? 'sent' : 'dropped'}`,
+    );
+  } else {
+    const coverageSeconds = scanner.coverageCycles() * pollSeconds;
+    console.log(
+      `watching ${config.network}: >= $${config.thresholdUsd} per ${config.windowMinutes}m window, ` +
+        `polling every ${pollSeconds}s, every page revisited within ${coverageSeconds}s`,
+    );
+
+    // The 5m volume is what makes a spike detectable, so a page left unscanned
+    // for longer than that can hide one.
+    if (coverageSeconds > 300) {
+      console.warn(`WARNING: full coverage takes ${coverageSeconds}s, longer than the 300s window`);
+    }
   }
 
   if (config.silent) {
@@ -258,11 +259,9 @@ async function main() {
     await sendMessage(
       config.botToken,
       config.chatId,
-      `✅ Bot started. Watching <b>${config.network}</b>: alerting on $${config.thresholdUsd.toLocaleString('en-US')}+ volume in ${config.windowMinutes} min.`,
+      `✅ Bot started. Watching <b>${useGmgn ? config.gmgnChain : config.network}</b>: alerting on $${config.thresholdUsd.toLocaleString('en-US')}+ volume in ${useGmgn ? 1 : config.windowMinutes} min.`,
     );
   }
-
-  if (config.gmgnApiKey) await probeGmgn(config);
 
   let stockTokens = new Set();
   let refreshStockTokensAt = 0;
@@ -282,12 +281,14 @@ async function main() {
       }
     }
 
+    const blacklist = new Set([...config.blacklist, ...stockTokens]);
     try {
-      await runCycle(config, scanner, gate, new Set([...config.blacklist, ...stockTokens]));
+      if (useGmgn) await runGmgnCycle(config, gate, blacklist);
+      else await runCycle(config, scanner, gate, blacklist);
     } catch (error) {
       console.error('cycle failed:', error.message);
     }
-    await sleep(config.pollIntervalSeconds * 1000);
+    await sleep(pollSeconds * 1000);
   }
 }
 
