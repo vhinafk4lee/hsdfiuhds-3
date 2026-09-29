@@ -19,8 +19,12 @@ async function runCycle(config, scanner, gate, blacklist) {
 
   const watched = [];
   const skipped = [];
+  // Counted apart so the cost of each filter is visible: the fee-tier rule can
+  // quietly remove most of the real pools, since 0.3% is Uniswap's default.
+  let byTier = 0;
   for (const pool of pools) {
-    if (excluded(pool)) skipped.push(pool.baseSymbol ?? pool.name);
+    if (isBlacklisted(pool, blacklist)) skipped.push(pool.baseSymbol ?? pool.name);
+    else if (hasSkippedFeeTier(pool, config.skipFeeTiers)) byTier++;
     else watched.push(pool);
   }
   // A token on hold cannot produce a message, so confirming it would spend a
@@ -36,7 +40,7 @@ async function runCycle(config, scanner, gate, blacklist) {
   console.log(
     `[${new Date().toISOString()}] trending=${trending} pages=${pages.join(',')} ` +
       `pools=${pools.length} skipped=${skipped.length}${skipped.length ? `(${[...new Set(skipped)].join(',')})` : ''} ` +
-      `candidates=${candidates.length} held=${held.length}`,
+      `bytier=${byTier} candidates=${candidates.length} held=${held.length}`,
   );
 
   // Questions about a miss always arrive after the fact, so record what the
