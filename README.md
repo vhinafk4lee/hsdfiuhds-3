@@ -111,6 +111,24 @@ npm run start:local
 3. `TELEGRAM_CHAT_ID` — `@имя_канала` для публичного канала, иначе числовой id
    (например `-1001234567890`).
 
+### Ключ GMGN
+
+Без ключа бот работает на GeckoTerminal; с ключом — на GMGN (точнее и с
+оценкой риска).
+
+1. Сгенерировать пару ключей Ed25519:
+   ```bash
+   openssl genpkey -algorithm ed25519 -out gmgn_private.pem
+   openssl pkey -in gmgn_private.pem -pubout
+   ```
+2. На https://gmgn.ai/ai → Create API Key вставить публичный ключ целиком,
+   вместе со строками `-----BEGIN PUBLIC KEY-----` и `-----END PUBLIC KEY-----`.
+   Enable Trading не включать — боту нужно только чтение.
+3. Если GMGN отвечает `INSUFFICIENT_ASSETS`, пополнить GMGN-кошелёк на
+   небольшую сумму и повторить.
+4. Полученный ключ (`gmgn_...`) записать в `GMGN_API_KEY`. Приватный ключ
+   для чтения не нужен, его никуда передавать не надо.
+
 ## Настройки
 
 | Переменная | По умолчанию | Описание |
