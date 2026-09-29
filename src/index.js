@@ -21,8 +21,9 @@ async function runGmgnCycle(config, gate, blacklist) {
   const rank = await fetchRank(config.gmgnApiKey, {
     chain: config.gmgnChain,
     interval: '1m',
+    // Filtered here rather than with min_volume, so the log shows the live top
+    // even in a quiet minute and an empty result can only mean an empty market.
     limit: 50,
-    minVolume: config.thresholdUsd,
     filters: config.gmgnFilters,
   });
 
