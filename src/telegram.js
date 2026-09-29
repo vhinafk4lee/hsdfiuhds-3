@@ -52,6 +52,7 @@ export function formatAlert({ pool, candle, windowMinutes, network }) {
     '',
     `Pair: ${escapeHtml(pool.name ?? '')}`,
     age ? `Age: ${age}` : null,
+    pool.dex ? `Dex: ${escapeHtml(pool.dex)}` : null,
     `Price: ${price}`,
     `Liquidity: ${usd.format(pool.liquidityUsd)}`,
     `24h volume: ${usd.format(pool.volume24h)}`,

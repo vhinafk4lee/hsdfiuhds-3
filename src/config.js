@@ -48,6 +48,10 @@ export function loadConfig() {
     blacklist: parseBlacklist(process.env.BLACKLIST),
     // Fee tiers to ignore entirely, matched at the end of the pool name.
     skipFeeTiers: parseBlacklist(process.env.SKIP_FEE_TIERS),
+    // Venues allowed to raise an alert. Empty means all of them; the cycle log
+    // reports which venues the scan actually saw, so this can be set from
+    // observed ids rather than guessed.
+    dexAllowlist: parseBlacklist(process.env.DEX_ALLOWLIST),
     // Robinhood Chain carries hundreds of tokenised stocks; they are not what
     // these alerts are for, and listing them by hand never ends.
     excludeStockTokens: process.env.EXCLUDE_STOCK_TOKENS !== '0',

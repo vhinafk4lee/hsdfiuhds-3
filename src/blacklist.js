@@ -21,6 +21,17 @@ export function hasSkippedFeeTier(pool, feeTiers) {
   return [...feeTiers].some((tier) => name.endsWith(tier));
 }
 
+/**
+ * Which venue a token trades on says a lot about it: the churned volume lives
+ * on one exchange while the real launches sit on another. An empty allowlist
+ * means every venue is allowed.
+ */
+export function isAllowedDex(pool, allowed) {
+  if (allowed.size === 0) return true;
+
+  return allowed.has(normalize(pool.dex));
+}
+
 /** An entry matches a pair ("USDG / WETH"), a base token symbol, or either address. */
 export function isBlacklisted(pool, blacklist) {
   if (blacklist.size === 0) return false;

@@ -36,6 +36,7 @@ function parsePools(body) {
     return {
       address: a.address,
       name: a.name,
+      dex: item?.relationships?.dex?.data?.id ?? null,
       baseSymbol: tokens.get(baseId)?.symbol ?? null,
       baseAddress: tokens.get(baseId)?.address ?? null,
       quoteSymbol: tokens.get(quoteId)?.symbol ?? null,

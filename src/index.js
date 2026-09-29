@@ -1,7 +1,7 @@
 import { loadConfig } from './config.js';
 import { fetchCandles } from './geckoterminal.js';
 import { sendMessage, formatAlert, formatAge } from './telegram.js';
-import { isBlacklisted, hasSkippedFeeTier } from './blacklist.js';
+import { isBlacklisted, hasSkippedFeeTier, isAllowedDex } from './blacklist.js';
 import { createScanner } from './scanner.js';
 import { createAlertGate } from './alerts.js';
 import { fetchStockTokens } from './stocktokens.js';
@@ -19,12 +19,14 @@ async function runCycle(config, scanner, gate, blacklist) {
 
   const watched = [];
   const skipped = [];
-  // Counted apart so the cost of each filter is visible: the fee-tier rule can
-  // quietly remove most of the real pools, since 0.3% is Uniswap's default.
+  // Counted apart so the cost of each filter is visible: the fee-tier and venue
+  // rules can quietly remove most of the real pools, not just the churned ones.
   let byTier = 0;
+  let byDex = 0;
   for (const pool of pools) {
     if (isBlacklisted(pool, blacklist)) skipped.push(pool.baseSymbol ?? pool.name);
     else if (hasSkippedFeeTier(pool, config.skipFeeTiers)) byTier++;
+    else if (!isAllowedDex(pool, config.dexAllowlist)) byDex++;
     else watched.push(pool);
   }
   // A token on hold cannot produce a message, so confirming it would spend a
@@ -40,7 +42,19 @@ async function runCycle(config, scanner, gate, blacklist) {
   console.log(
     `[${new Date().toISOString()}] trending=${trending} pages=${pages.join(',')} ` +
       `pools=${pools.length} skipped=${skipped.length}${skipped.length ? `(${[...new Set(skipped)].join(',')})` : ''} ` +
-      `bytier=${byTier} candidates=${candidates.length} held=${held.length}`,
+      `bytier=${byTier} bydex=${byDex} candidates=${candidates.length} held=${held.length}`,
+  );
+
+  // The venue ids have to be read off the live network before an allowlist can
+  // be set from them, so report what this scan actually saw.
+  const venues = new Map();
+  for (const pool of pools) venues.set(pool.dex ?? 'unknown', (venues.get(pool.dex ?? 'unknown') ?? 0) + 1);
+  console.log(
+    'dex ' +
+      [...venues]
+        .sort((a, b) => b[1] - a[1])
+        .map(([dex, count]) => `${dex}=${count}`)
+        .join(' '),
   );
 
   // Questions about a miss always arrive after the fact, so record what the
