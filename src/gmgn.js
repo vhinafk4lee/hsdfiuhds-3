@@ -29,12 +29,18 @@ async function get(apiKey, path, query) {
   } catch {
     throw new Error(`GMGN ${path} -> HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
-  if (json.code !== 0) {
-    throw new Error(
-      `GMGN ${path} -> HTTP ${res.status} code=${json.code} ${json.error ?? ''} ${json.message ?? ''}`.trim(),
-    );
+  // Some routes wrap the upstream reply in a second {code, data, message}
+  // envelope, and its code can fail while the outer one says success.
+  for (let envelope = json; ; envelope = envelope.data) {
+    if (envelope.code !== 0) {
+      throw new Error(
+        `GMGN ${path} -> HTTP ${res.status} code=${envelope.code} ` +
+          `${envelope.error ?? envelope.reason ?? ''} ${envelope.message ?? ''}`.trim(),
+      );
+    }
+    const inner = envelope.data;
+    if (!(inner && typeof inner === 'object' && 'code' in inner && 'data' in inner)) return inner;
   }
-  return json.data;
 }
 
 /**
