@@ -56,5 +56,10 @@ export function loadConfig() {
     // these alerts are for, and listing them by hand never ends.
     excludeStockTokens: process.env.EXCLUDE_STOCK_TOKENS !== '0',
     stockRegistryUrl: process.env.STOCK_REGISTRY_URL || 'https://api.robinhood.com/rhj/assets',
+    // GMGN is being evaluated as a replacement data source. With a key set, each
+    // cycle also asks its 1m ranking and logs it next to our own scan; nothing
+    // from it reaches Telegram yet.
+    gmgnApiKey: process.env.GMGN_API_KEY || null,
+    gmgnChain: process.env.GMGN_CHAIN || 'robinhood',
   };
 }

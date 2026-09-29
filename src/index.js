@@ -5,8 +5,48 @@ import { isBlacklisted, hasSkippedFeeTier, isAllowedDex } from './blacklist.js';
 import { createScanner } from './scanner.js';
 import { createAlertGate } from './alerts.js';
 import { fetchStockTokens } from './stocktokens.js';
+import { fetchRank } from './gmgn.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+let gmgnRawLogged = false;
+
+/**
+ * Logs GMGN's 1m ranking beside our own scan, so the two can be compared on the
+ * same minutes before GMGN is trusted with alerts. Its field names are taken
+ * from its docs, which contradict themselves in places — the first response is
+ * dumped raw once so the real shape can be checked.
+ */
+async function shadowGmgn(config, blacklist) {
+  let rank;
+  try {
+    rank = await fetchRank(config.gmgnApiKey, { chain: config.gmgnChain, interval: '1m', limit: 20 });
+  } catch (error) {
+    console.error(`gmgn: ${error.message}`);
+    return;
+  }
+
+  if (!gmgnRawLogged) {
+    gmgnRawLogged = true;
+    console.log(`gmgn raw (${rank.length} items): ${JSON.stringify(rank.slice(0, 2)).slice(0, 4000)}`);
+  }
+
+  const pct = (value) => (value === undefined || value === null || value === '' ? '?' : Math.round(value * 100));
+  const describe = (item) => {
+    const excluded = isBlacklisted({ baseSymbol: item.symbol, baseAddress: item.address }, blacklist);
+    return (
+      `${excluded ? '*' : ''}${item.symbol}=${Math.round(item.volume)}` +
+      `(liq=${Math.round(item.liquidity ?? 0)} rug=${pct(item.rug_ratio)} wash=${item.is_wash_trading ? 1 : 0} ` +
+      `bundler=${pct(item.bundler_rate)} ex=${item.exchange ?? item.launchpad_platform ?? '?'} ` +
+      `age=${formatAge(item.creation_timestamp ? item.creation_timestamp * 1000 : null) ?? '?'})`
+    );
+  };
+
+  console.log(`gmgn1m ${rank.slice(0, 5).map(describe).join(' ')}`);
+  for (const item of rank.filter((i) => Number(i.volume) >= config.thresholdUsd)) {
+    console.log(`gmgn-hit ${describe(item)} ${item.address}`);
+  }
+}
 
 async function runCycle(config, scanner, gate, blacklist) {
   const { pools, pages, trending } = await scanner.scan();
@@ -90,6 +130,8 @@ async function runCycle(config, scanner, gate, blacklist) {
             .join(' | '),
     );
   }
+
+  if (config.gmgnApiKey) await shadowGmgn(config, blacklist);
 
   for (const pool of candidates) {
     let candles;
